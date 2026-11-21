@@ -1,0 +1,19 @@
+# SwiftPM / build outputs
+.build/
+build/
+*.xcodeproj/
+.swiftpm/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Local agent state
+.commandcode/
+
+# Never commit secrets (Gemini API key lives in ~/Library/Application Support/Kodau/config.json / Keychain)
+config.json
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
