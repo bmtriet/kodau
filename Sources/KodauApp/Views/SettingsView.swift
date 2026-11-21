@@ -556,6 +556,27 @@ public struct SettingsView: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             Toggle(
+                                "Luôn hiện biểu tượng Kodau trên thanh menu",
+                                isOn: Binding(
+                                    get: { appState.config.alwaysShowMenuBarIcon },
+                                    set: {
+                                        appState.config.alwaysShowMenuBarIcon = $0
+                                        appState.saveConfig()
+                                    }
+                                )
+                            )
+                            .font(.subheadline.weight(.medium))
+
+                            Text("Tắt (mặc định): khi đã thêm bộ gõ Kodau vào Input Sources, chỉ còn một biểu tượng của macOS — bấm vào đó để đổi chế độ, bật Gemini hay mở bảng điều khiển. Mở lại Kodau.app cũng hiện bảng điều khiển.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(
                                 "Chế độ cũ: chặn phím toàn hệ thống (cần quyền Trợ năng)",
                                 isOn: Binding(
                                     get: { appState.config.legacyEventTapEnabled },

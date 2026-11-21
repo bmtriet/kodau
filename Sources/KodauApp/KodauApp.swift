@@ -94,13 +94,31 @@ public final class KodauAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
     // MARK: - Menu Bar (NSStatusItem)
 
     private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.statusItem = item
         refreshStatusItem()
     }
 
+    /// Kodau.app's own icon is only needed while it has something to say that macOS's input menu cannot:
+    /// KodauIM still needs setting up, or the legacy event tap is doing the typing. Once Kodau is an enabled
+    /// input source, its own input menu (modes, Gemini, dashboard) takes over and this icon would be a duplicate.
+    /// Deliberately independent of which source is *selected*, so the icon doesn't flicker on every ⌃Space.
+    private var shouldShowStatusItem: Bool {
+        if appState.config.alwaysShowMenuBarIcon || appState.config.legacyEventTapEnabled { return true }
+        switch appState.kodauIMStatus {
+        case .notInstalled, .installedNotEnabled: return true
+        case .enabledNotSelected, .active: return false
+        }
+    }
+
     private func refreshStatusItem() {
-        guard let statusItem else { return }
+        guard shouldShowStatusItem else {
+            if let statusItem {
+                NSStatusBar.system.removeStatusItem(statusItem)
+                self.statusItem = nil
+            }
+            return
+        }
+        let statusItem = self.statusItem ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusItem = statusItem
 
         if let button = statusItem.button {
             button.title = appState.menuBarTitle
