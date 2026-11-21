@@ -69,6 +69,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Legacy typing path: Kodau.app intercepts every keystroke with a CGEventTap (needs Accessibility) and edits
     /// text with synthetic Backspaces. Off by default — the native KodauIM input source is the primary path.
     public var legacyEventTapEnabled: Bool
+    /// Let Gemini also fix clear spelling mistakes (Vietnamese & English), word-for-word within a small edit
+    /// distance. Off by default: Kodau then only adds diacritics and never changes the user's letters.
+    public var fixTyposEnabled: Bool
 
     public static let availableGeminiModels: [String] = [
         "gemini-3.5-flash-lite",
@@ -104,7 +107,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         dailyGeminiCallLimit: Int = 500,
         dailyGeminiBudgetVND: Double = 5_000,
         minGeminiIntervalSeconds: Double = 1.0,
-        legacyEventTapEnabled: Bool = false
+        legacyEventTapEnabled: Bool = false,
+        fixTyposEnabled: Bool = false
     ) {
         self.typingMode = typingMode
         self.brainStrategy = brainStrategy
@@ -127,6 +131,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.dailyGeminiBudgetVND = dailyGeminiBudgetVND
         self.minGeminiIntervalSeconds = minGeminiIntervalSeconds
         self.legacyEventTapEnabled = legacyEventTapEnabled
+        self.fixTyposEnabled = fixTyposEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -153,6 +158,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.dailyGeminiBudgetVND = try c.decodeIfPresent(Double.self, forKey: .dailyGeminiBudgetVND) ?? defaults.dailyGeminiBudgetVND
         self.minGeminiIntervalSeconds = try c.decodeIfPresent(Double.self, forKey: .minGeminiIntervalSeconds) ?? defaults.minGeminiIntervalSeconds
         self.legacyEventTapEnabled = try c.decodeIfPresent(Bool.self, forKey: .legacyEventTapEnabled) ?? defaults.legacyEventTapEnabled
+        self.fixTyposEnabled = try c.decodeIfPresent(Bool.self, forKey: .fixTyposEnabled) ?? defaults.fixTyposEnabled
     }
 
     /// Resolves the effective API key (config first, then environment variable `GEMINI_API_KEY`).

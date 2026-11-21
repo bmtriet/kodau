@@ -303,6 +303,17 @@ public final class LocalDiacriticEngine: Sendable {
         // Require >= 2 words for non-user-corrected phrase recall so single words still use full context
         guard wordSegments.count >= 2 || match.userCorrected else { return nil }
 
+        // Never replay a stored phrase that changes the user's words (e.g. polluted by an old model rewrite):
+        // the recalled text must be the input word-for-word, differing only in diacritics.
+        let inputWords = TextSegmenter.wordTokens(from: matchCore)
+        let recalledWords = TextSegmenter.wordTokens(from: match.restored)
+        guard inputWords.count == recalledWords.count,
+              zip(inputWords, recalledWords).allSatisfy({
+                  VNIEngine.stripDiacritics($0).lowercased() == VNIEngine.stripDiacritics($1).lowercased()
+              }) else {
+            return nil
+        }
+
         let casedRestored = applyPhraseCasing(fromOriginal: matchCore, toRestored: match.restored)
         let finalOutput = leadingWS + casedRestored + trailingPunct + trailingWS
 

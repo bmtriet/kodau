@@ -58,6 +58,15 @@ public struct GeminiTestResult: Sendable {
     }
 }
 
+/// What Gemini is allowed to change in the user's text.
+public enum GeminiRestoreMode: String, Codable, Sendable {
+    /// Add Vietnamese diacritics only. Every word keeps its exact letters, order, casing and punctuation.
+    case diacriticsOnly
+    /// Additionally fix clear spelling mistakes (Vietnamese and English), one word at a time, within a small
+    /// edit distance. Never rephrases, never expands abbreviations, never changes word count.
+    case fixTypos
+}
+
 /// Async Google Gemini REST API client for contextual Vietnamese diacritic restoration
 /// and Vietnamese-English code-switching refinement.
 public final class GeminiClient: Sendable {
@@ -74,6 +83,7 @@ public final class GeminiClient: Sendable {
         precedingContext: String = "",
         apiKey: String,
         model: String,
+        mode: GeminiRestoreMode = .diacriticsOnly,
         timeoutSeconds: TimeInterval = 4.0
     ) async throws -> ConversionResult {
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -112,7 +122,7 @@ public final class GeminiClient: Sendable {
         let requestBody = GeminiGenerateRequest(
             systemInstruction: GeminiContent(
                 role: nil,
-                parts: [GeminiPart(text: Self.systemPrompt)]
+                parts: [GeminiPart(text: mode == .fixTypos ? Self.typoFixSystemPrompt : Self.systemPrompt)]
             ),
             contents: [
                 GeminiContent(
@@ -174,7 +184,7 @@ public final class GeminiClient: Sendable {
         }
 
         let parsed = Self.parseModelOutput(rawModelText)
-        let sanitizedText = try Self.sanitizeAndValidate(original: text, restored: parsed.text)
+        let sanitizedText = try Self.sanitizeAndValidate(original: text, restored: parsed.text, mode: mode)
         let alternatives = Self.buildWordAlternatives(
             sanitizedText: sanitizedText,
             rawAlternatives: parsed.alternatives
@@ -245,17 +255,45 @@ public final class GeminiClient: Sendable {
 
     // MARK: - Prompting & Parsing
 
+    /// Diacritics-only contract. The user's words are NOT ours to edit: the model may only add Vietnamese tone and
+    /// vowel marks (and d -> đ). The validator below enforces this even if the model disobeys.
     private static let systemPrompt = """
-    You are a deterministic Vietnamese diacritic restoration engine for a macOS keyboard.
-    Rules:
-    1. Restore accurate Vietnamese diacritics ONLY to Vietnamese words typed without diacritics.
-    2. Keep English words, technical terms, code identifiers, URLs, emails, numbers, punctuation, emojis, and original capitalization completely untouched.
-    3. Support natural Vietnamese-English code-switching (e.g. "hom nay minh fix bug va review PR cho team" -> "hôm nay mình fix bug và review PR cho team").
-    4. If the input is pure English, return it unchanged.
-    5. Preserve the EXACT word count, word order, whitespace, and punctuation. NEVER translate, explain, rephrase, add, or drop words.
-    6. For Vietnamese oa/oe/uy open syllables, ALWAYS put the tone mark on the first vowel: hòa, tòa, xóa, khỏe, thủy (òa, óe, úy — NOT hoà, toà, khoẻ, thuý).
-    7. Output ONLY a JSON object with this exact schema:
-    {"text":"<restored text>","alternatives":[{"wordIndex":0,"base":"<ascii lowercase base>","candidates":["<selected>","<alt2>"]}]}
+    You are a Vietnamese DIACRITIC RESTORER inside a macOS keyboard. You are NOT an editor, spell checker, translator or writer.
+    The user's text belongs to the user. Your ONLY permitted change: add Vietnamese tone/vowel marks to Vietnamese words typed without them (a->á/à/ả/ã/ạ/â/ă…, o->ô/ơ…, u->ư…, d->đ).
+
+    Hard rules (violating any of them makes the output unusable):
+    1. Output EXACTLY the same words, in the same order, with the same count. Removing every diacritic from your output must give back the input letter-for-letter.
+    2. NEVER fix spelling or typos, even obvious ones ("dnag" stays "dnag", "teh" stays "teh").
+    3. NEVER expand or change abbreviations, slang or teencode ("ko", "k", "dc", "j", "vs", "ok" stay exactly as typed).
+    4. NEVER translate, rephrase, reorder, add, merge, split or drop words. NEVER change punctuation, spacing, emojis or capitalization.
+    5. Keep English words, names, technical terms, code, URLs, emails and numbers untouched. If the input is pure English, return it unchanged.
+    6. Natural Vietnamese-English code-switching is expected: "hom nay minh fix bug va review PR cho team" -> "hôm nay mình fix bug và review PR cho team".
+    7. Tone placement for open oa/oe/uy syllables goes on the first vowel: hòa, tòa, xóa, khỏe, thủy.
+    8. Use "Preceding context" only to disambiguate; never copy it into the output.
+
+    Output ONLY this JSON object:
+    {"text":"<input with diacritics added>","alternatives":[{"wordIndex":0,"base":"<ascii lowercase base>","candidates":["<selected>","<alt2>"]}]}
+    Include "alternatives" only for genuinely ambiguous Vietnamese words (up to 5 words, up to 4 candidates each).
+    """
+
+    /// Opt-in typo fixing: still word-for-word, but a clearly misspelled word may be replaced by its intended
+    /// spelling. The validator caps each change to a small edit distance and keeps the word count fixed.
+    private static let typoFixSystemPrompt = """
+    You are a Vietnamese DIACRITIC RESTORER with LIGHT TYPO CORRECTION inside a macOS keyboard. You are NOT an editor or writer.
+    Allowed changes, nothing else:
+    A. Add Vietnamese tone/vowel marks to Vietnamese words typed without them (d->đ included).
+    B. Fix a word that is clearly MISSPELLED (Vietnamese or English) into the word the user obviously meant: swapped, missing, doubled or wrong neighbouring letters ("dnag"->"đang", "khogn"->"không", "teh"->"the", "recieve"->"receive"). One word in, one word out.
+
+    Hard rules:
+    1. Same number of words, same order. Never add, drop, merge, split, translate or reorder words.
+    2. Only fix real misspellings. If a word is a valid word, a name, an abbreviation, slang or teencode ("ko", "k", "dc", "j", "vs", "ok"), leave its letters exactly as typed (only add diacritics).
+    3. Never change grammar, word choice, style, punctuation, spacing, emojis or capitalization.
+    4. Keep technical terms, code, URLs, emails and numbers untouched.
+    5. Tone placement for open oa/oe/uy syllables goes on the first vowel: hòa, tòa, xóa, khỏe, thủy.
+    6. Use "Preceding context" only to disambiguate; never copy it into the output.
+
+    Output ONLY this JSON object:
+    {"text":"<corrected text>","alternatives":[{"wordIndex":0,"base":"<ascii lowercase base>","candidates":["<selected>","<alt2>"]}]}
     Include "alternatives" only for genuinely ambiguous Vietnamese words (up to 5 words, up to 4 candidates each).
     """
 
@@ -354,7 +392,14 @@ public final class GeminiClient: Sendable {
 
     // MARK: - Anti-Hallucination Safety Guard
 
-    private static func sanitizeAndValidate(original: String, restored: String) throws -> String {
+    /// Enforces that Gemini never edits the user's words beyond what `mode` allows, regardless of what the model
+    /// returns. The output is rebuilt from the ORIGINAL text's segments (spacing, punctuation, casing pattern), and
+    /// each word is either the model's word (if allowed) or the user's original word.
+    internal static func sanitizeAndValidate(
+        original: String,
+        restored: String,
+        mode: GeminiRestoreMode = .diacriticsOnly
+    ) throws -> String {
         let trimmedRestored = restored.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRestored.isEmpty else {
             throw GeminiError.emptyResponse
@@ -365,7 +410,6 @@ public final class GeminiClient: Sendable {
             throw GeminiError.decodingError("Model response length deviated too far from original input")
         }
 
-        // Preserve exact leading and trailing whitespace from the original input
         let leadingWS = String(original.prefix(while: { $0.isWhitespace }))
         let afterLeading = original.dropFirst(leadingWS.count)
         let trailingWS = String(afterLeading.reversed().prefix(while: { $0.isWhitespace }).reversed())
@@ -379,60 +423,80 @@ public final class GeminiClient: Sendable {
             return original
         }
 
-        // Reject drastically altered word count
-        let maxAllowedDiff = max(1, origWords.count / 5)
-        if abs(origWords.count - newWords.count) > maxAllowedDiff {
+        // Word-for-word contract: any added, dropped, merged or split word means the model rewrote the text.
+        // Reject the whole response so the caller falls back to the local engine (never guess an alignment).
+        guard origWords.count == newWords.count else {
             throw GeminiError.decodingError("Model changed word count from \(origWords.count) to \(newWords.count)")
         }
 
-        // If exact word count matches, rebuild using original whitespace/punctuation and verify every token's ASCII base
-        if origWords.count == newWords.count {
-            var mismatchedBaseCount = 0
-            var verifiedWords: [String] = []
-            verifiedWords.reserveCapacity(origWords.count)
+        var rejectedWordCount = 0
+        var verifiedWords: [String] = []
+        verifiedWords.reserveCapacity(origWords.count)
 
-            for idx in origWords.indices {
-                let origWord = origWords[idx].raw
-                let candidateWord = newWords[idx]
-                let origBase = VNIEngine.stripDiacritics(origWord).lowercased()
-                let candBase = VNIEngine.stripDiacritics(candidateWord).lowercased()
+        for idx in origWords.indices {
+            let origWord = origWords[idx].raw
+            let candidateWord = newWords[idx]
 
-                if origBase == candBase {
-                    // Valid diacritic-only transformation; preserve user's casing pattern
-                    verifiedWords.append(VietnamesePhonology.preserveCasing(from: origWord, to: candidateWord))
-                } else {
-                    // Model altered the base spelling (e.g. translated an English word or broke a URL/code token) -> keep original!
-                    mismatchedBaseCount += 1
-                    verifiedWords.append(origWord)
-                }
+            if isAllowedWordChange(from: origWord, to: candidateWord, mode: mode) {
+                verifiedWords.append(VietnamesePhonology.preserveCasing(from: origWord, to: candidateWord))
+            } else {
+                // Disallowed edit (spelling change, translation, expansion, broken code token...) -> keep the user's word.
+                rejectedWordCount += 1
+                verifiedWords.append(origWord)
             }
-
-            // If more than 40% of words were hallucinated/translated, reject the whole response so we fall back to LocalEngine
-            if Double(mismatchedBaseCount) / Double(origWords.count) > 0.40 {
-                throw GeminiError.decodingError("Model altered too many base words (\(mismatchedBaseCount)/\(origWords.count))")
-            }
-
-            var rebuilt = ""
-            rebuilt.reserveCapacity(trimmedRestored.count + leadingWS.count + trailingWS.count)
-            rebuilt.append(leadingWS)
-            for seg in origSegments {
-                if seg.isWord {
-                    rebuilt.append(verifiedWords[seg.wordIndex])
-                } else {
-                    rebuilt.append(seg.raw)
-                }
-            }
-            rebuilt.append(trailingWS)
-            return rebuilt
         }
 
-        // Slight word-count mismatch within tolerance: verify stripped similarity
-        let origNorm = VNIEngine.stripDiacritics(coreOriginal).lowercased()
-        let newNorm = VNIEngine.stripDiacritics(trimmedRestored).lowercased()
-        if abs(origNorm.count - newNorm.count) > max(4, origNorm.count / 4) {
-            throw GeminiError.decodingError("Model text diverged from original stripped text")
+        // If the model went off-script on many words, distrust the whole response.
+        if Double(rejectedWordCount) / Double(origWords.count) > 0.40 {
+            throw GeminiError.decodingError("Model altered too many base words (\(rejectedWordCount)/\(origWords.count))")
         }
-        return leadingWS + trimmedRestored + trailingWS
+
+        var rebuilt = leadingWS
+        for seg in origSegments {
+            rebuilt.append(seg.isWord ? verifiedWords[seg.wordIndex] : seg.raw)
+        }
+        rebuilt.append(trailingWS)
+        return rebuilt
+    }
+
+    /// Whether replacing the user's `original` word with `candidate` is allowed in `mode`.
+    internal static func isAllowedWordChange(from original: String, to candidate: String, mode: GeminiRestoreMode) -> Bool {
+        let origBase = VNIEngine.stripDiacritics(original).lowercased()
+        let candBase = VNIEngine.stripDiacritics(candidate).lowercased()
+
+        // Diacritics-only change: always allowed in both modes.
+        if origBase == candBase { return true }
+
+        guard mode == .fixTypos else { return false }
+
+        // Never "fix" code, URLs, numbers, emails, or words containing digits/symbols.
+        if VietnamesePhonology.isCodeOrTechnicalToken(original) { return false }
+        guard origBase.allSatisfy({ $0.isLetter }), candBase.allSatisfy({ $0.isLetter }) else { return false }
+        // Very short tokens are usually abbreviations/teencode ("ko", "dc", "k") — leave them alone.
+        guard origBase.count >= 3 else { return false }
+
+        let distance = damerauLevenshtein(Array(origBase), Array(candBase))
+        let maxDistance = origBase.count <= 4 ? 1 : 2
+        return distance <= maxDistance
+    }
+
+    /// Optimal-string-alignment distance (adjacent transposition counts as 1, e.g. "teh" -> "the").
+    internal static func damerauLevenshtein(_ a: [Character], _ b: [Character]) -> Int {
+        if a.isEmpty { return b.count }
+        if b.isEmpty { return a.count }
+        var d = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
+        for i in 0...a.count { d[i][0] = i }
+        for j in 0...b.count { d[0][j] = j }
+        for i in 1...a.count {
+            for j in 1...b.count {
+                let cost = a[i - 1] == b[j - 1] ? 0 : 1
+                d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+                if i > 1, j > 1, a[i - 1] == b[j - 2], a[i - 2] == b[j - 1] {
+                    d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+                }
+            }
+        }
+        return d[a.count][b.count]
     }
 
     private static func buildWordAlternatives(

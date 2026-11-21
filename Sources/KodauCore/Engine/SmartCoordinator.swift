@@ -358,10 +358,12 @@ public final class SmartCoordinator: @unchecked Sendable {
         //    offline brain has not changed since. Serve it without touching the network, the usage
         //    ledger, or the learned data (the answer was learned when it was first produced).
         let correctionGeneration = store.correctionGeneration
+        let restoreMode: GeminiRestoreMode = cfg.fixTyposEnabled ? .fixTypos : .diacriticsOnly
         let cacheKey = geminiCacheKey(
             text: text,
             precedingContext: precedingContext,
-            model: cfg.geminiModel
+            model: cfg.geminiModel,
+            mode: restoreMode
         )
         if let cached = cachedGeminiEntry(for: cacheKey, correctionGeneration: correctionGeneration) {
             setLastGeminiSkipReason(.cacheHit)
@@ -413,7 +415,8 @@ public final class SmartCoordinator: @unchecked Sendable {
                 text: workingText,
                 precedingContext: precedingContext,
                 apiKey: cfg.effectiveAPIKey,
-                model: cfg.geminiModel
+                model: cfg.geminiModel,
+                mode: restoreMode
             )
             let requestTask = Task.detached(priority: .userInitiated) {
                 try await restore()
@@ -736,7 +739,8 @@ public final class SmartCoordinator: @unchecked Sendable {
         text: String,
         precedingContext: String,
         apiKey: String,
-        model: String
+        model: String,
+        mode: GeminiRestoreMode
     ) -> @Sendable () async throws -> ConversionResult {
         if let override = geminiRestoreOverride {
             return { try await override(text, precedingContext, apiKey, model) }
@@ -747,18 +751,21 @@ public final class SmartCoordinator: @unchecked Sendable {
                 text: text,
                 precedingContext: precedingContext,
                 apiKey: apiKey,
-                model: model
+                model: model,
+                mode: mode
             )
         }
     }
 
-    /// Cache key: exact trimmed clause + last two context words (lowercased) + model.
-    private func geminiCacheKey(text: String, precedingContext: String, model: String) -> String {
+    /// Cache key: exact trimmed clause + last two context words (lowercased) + model + restore mode
+    /// (a typo-fixed answer must never be replayed when only diacritics are allowed, and vice versa).
+    private func geminiCacheKey(text: String, precedingContext: String, model: String, mode: GeminiRestoreMode) -> String {
         let contextWords = TextSegmenter.wordTokens(from: precedingContext).suffix(2).map { $0.lowercased() }
         return [
             text.trimmingCharacters(in: .whitespacesAndNewlines),
             contextWords.joined(separator: " "),
-            model
+            model,
+            mode.rawValue
         ].joined(separator: "\u{1F}")
     }
 

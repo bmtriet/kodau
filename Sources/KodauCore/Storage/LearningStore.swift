@@ -181,6 +181,21 @@ public final class LearningStore: @unchecked Sendable {
         }
     }
 
+    // MARK: - Word-Identity Guards
+
+    /// True when `surface` is `base` with (or without) Vietnamese diacritics, i.e. the same word.
+    static func surface(_ surface: String, matchesBase base: String) -> Bool {
+        VNIEngine.stripDiacritics(surface).lowercased() == VNIEngine.stripDiacritics(base).lowercased()
+    }
+
+    /// True when `corrected` is `raw` word-for-word, differing only in diacritics/casing.
+    static func clause(_ corrected: String, matchesRawClause raw: String) -> Bool {
+        let rawWords = TextSegmenter.wordTokens(from: raw)
+        let correctedWords = TextSegmenter.wordTokens(from: corrected)
+        guard rawWords.count == correctedWords.count else { return false }
+        return zip(rawWords, correctedWords).allSatisfy { surface($1, matchesBase: $0) }
+    }
+
     // MARK: - Learning APIs
 
     /// Pseudo-word used as left context for the first word of a sentence/clause, so even sentence-initial
@@ -278,6 +293,9 @@ public final class LearningStore: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         guard !cleanBase.isEmpty, !cleanSurface.isEmpty else { return }
+        // Corrections only ever change diacritics. A different word (abbreviation expansion, typo fix, model
+        // rewrite) must not become a learned rule that silently rewrites what the user types.
+        guard Self.surface(cleanSurface, matchesBase: cleanBase) else { return }
 
         let hasDiacritics = VNIEngine.containsVietnameseDiacritics(cleanSurface)
         let isEnglish: Bool
@@ -349,7 +367,8 @@ public final class LearningStore: @unchecked Sendable {
                 if let rawClause = fullRawClause?.trimmingCharacters(in: .whitespacesAndNewlines),
                    let correctedClause = fullCorrectedClause?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !rawClause.isEmpty,
-                   !correctedClause.isEmpty {
+                   !correctedClause.isEmpty,
+                   Self.clause(correctedClause, matchesRawClause: rawClause) {
                     let rawNorm = Self.normalizePhraseKey(rawClause)
                     if !rawNorm.isEmpty {
                         upsertPhraseLocked(
@@ -431,7 +450,8 @@ public final class LearningStore: @unchecked Sendable {
                 let isEnglish = sqlite3_column_int(stmt, 3) != 0
                 results.append((surface: surface, count: count, userVerified: userVerified, isEnglish: isEnglish))
             }
-            return results
+            // A learned surface must be this base word with diacritics; never a different word (e.g. "ko" -> "không").
+            return results.filter { Self.surface($0.surface, matchesBase: key) }
         }
     }
 
@@ -461,7 +481,8 @@ public final class LearningStore: @unchecked Sendable {
                 let userVerified = sqlite3_column_int(stmt, 2) != 0
                 results.append((surface: surface, count: count, userVerified: userVerified))
             }
-            return results
+            // A learned surface must be this base word with diacritics; never a different word (e.g. "ko" -> "không").
+            return results.filter { Self.surface($0.surface, matchesBase: base) }
         }
     }
 
@@ -493,7 +514,8 @@ public final class LearningStore: @unchecked Sendable {
                 let userVerified = sqlite3_column_int(stmt, 2) != 0
                 results.append((surface: surface, count: count, userVerified: userVerified))
             }
-            return results
+            // A learned surface must be this base word with diacritics; never a different word (e.g. "ko" -> "không").
+            return results.filter { Self.surface($0.surface, matchesBase: base) }
         }
     }
 
@@ -525,7 +547,8 @@ public final class LearningStore: @unchecked Sendable {
                     userVerified: sqlite3_column_int(stmt, 2) != 0
                 ))
             }
-            return results
+            // A learned surface must be this base word with diacritics; never a different word (e.g. "ko" -> "không").
+            return results.filter { Self.surface($0.surface, matchesBase: base) }
         }
     }
 
