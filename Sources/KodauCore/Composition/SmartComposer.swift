@@ -61,6 +61,46 @@ public struct RefinementRequest: Equatable, Sendable {
     }
 }
 
+/// One word that Gemini changed in a refinement. Used to explain the change in the popup and to undo it.
+public struct GeminiChange: Equatable, Sendable {
+    /// 0-based word index in the clause.
+    public var wordIndex: Int
+    /// Surface shown before the refinement.
+    public var from: String
+    /// Surface produced by the refinement.
+    public var to: String
+
+    public init(wordIndex: Int, from: String, to: String) {
+        self.wordIndex = wordIndex
+        self.from = from
+        self.to = to
+    }
+}
+
+/// Everything the floating candidate popup needs for one appearance.
+public struct CandidatePresentation: Equatable, Sendable {
+    /// The ambiguous word the candidate actions (`⌥1..5`, click) apply to.
+    public var alternative: WordAlternative
+    /// UTF-16 range of the focused word in the marked text, so the adapter can underline it thicker.
+    public var focusedRange: NSRange
+    /// Words Gemini changed in this refinement; empty for a normal candidate popup.
+    public var geminiChanges: [GeminiChange]
+    /// Explicit user actions (`⌥←`/`⌥→`, `⌥Space`) show at once; automatic Space popups are debounced.
+    public var showsImmediately: Bool
+
+    public init(
+        alternative: WordAlternative,
+        focusedRange: NSRange,
+        geminiChanges: [GeminiChange] = [],
+        showsImmediately: Bool = false
+    ) {
+        self.alternative = alternative
+        self.focusedRange = focusedRange
+        self.geminiChanges = geminiChanges
+        self.showsImmediately = showsImmediately
+    }
+}
+
 /// Side effects the adapter applies, in order, after `handleKey`/`applyRefinement`/`commitAll`.
 public enum ComposerAction: Equatable, Sendable {
     /// Replace the underlined composing text.
@@ -76,7 +116,7 @@ public enum ComposerAction: Equatable, Sendable {
     /// Fire-and-forget `convertSmart` purely for learning; result ignored.
     case backgroundDistill(raw: String, context: String)
     /// Show quick-fix alternatives (only emitted when the HUD is enabled and there is a real choice).
-    case showCandidates(WordAlternative)
+    case showCandidates(CandidatePresentation)
     /// Hide the quick-fix alternatives.
     case hideCandidates
     /// Ctrl+Shift+Space: advance the typing mode; the adapter persists the new config.
@@ -118,6 +158,13 @@ public final class SmartComposer {
     private var clauseVersion: UInt64 = 0
     private var geminiRefinedVersion: UInt64 = 0
     private var manualConvertedVersion: UInt64 = 0
+
+    /// Ambiguous word the candidate popup and `⌥1..5` currently act on.
+    private var focusedWordIndex: Int?
+    /// Synthetic alternative used when the focused word has no `WordAlternative` of its own (e.g. a typo fix).
+    private var synthesizedFocusAlternative: WordAlternative?
+    /// Gemini changes still active since the last refinement; `⌥Esc` reverts exactly these while non-empty.
+    private var pendingGeminiChanges: [GeminiChange] = []
 
     private let maxMarkedWords = 12
     private let maxManualMarkedWords = 28
@@ -179,8 +226,17 @@ public final class SmartComposer {
                 return ComposerResult(handled: true, actions: pending + actions)
             }
 
-            // Option + Escape: revert composing clause to raw ASCII (English) & teach store
+            // Option + Left/Right: move the popup focus between ambiguous words. Only consumed while a Smart
+            // clause with real alternatives is composing; otherwise the arrow keeps its normal cursor meaning.
+            if keyCode == 123 || keyCode == 124, let actions = cycleCandidateFocus(forward: keyCode == 124) {
+                return ComposerResult(handled: true, actions: pending + actions)
+            }
+
+            // Option + Escape: revert the Gemini changes in place, or the whole composing clause to raw ASCII.
             if keyCode == 53 && !rawClause.isEmpty {
+                if !pendingGeminiChanges.isEmpty {
+                    return ComposerResult(handled: true, actions: pending + revertGeminiChanges())
+                }
                 return ComposerResult(handled: true, actions: pending + revertAndCommitRawASCII())
             }
         }
@@ -360,12 +416,21 @@ public final class SmartComposer {
 
             rawClause.append(" ")
             clauseVersion &+= 1
+            pendingGeminiChanges = []
             let localRes = runLocalConversionPreservingLocks(raw: rawClause)
             displayedClause = localRes.convertedText
             lastResult = localRes
-            var actions: [ComposerAction] = [.hideCandidates, .setMarked(displayedClause)]
-            if let candidate = candidateAction(for: localRes) {
+            focusedWordIndex = realAlternatives(in: localRes).last?.wordIndex
+            synthesizedFocusAlternative = nil
+            var actions: [ComposerAction] = [.setMarked(displayedClause)]
+
+            // Only nag about the word the user just finished; older ambiguous words stay available via `⌥←/→`.
+            let completedWordIndex = wordCount(in: rawClause) - 1
+            if let focused = focusedAlternative, focused.wordIndex == completedWordIndex,
+               let candidate = candidatePresentation(for: focused, showsImmediately: false) {
                 actions.append(candidate)
+            } else {
+                actions.append(.hideCandidates)
             }
 
             // If clause is getting long, commit completed prefix so marked text stays sleek
@@ -409,6 +474,7 @@ public final class SmartComposer {
                 rawClause.append(ch)
                 displayedClause.append(ch)
                 clauseVersion &+= 1
+                pendingGeminiChanges = []
                 return ComposerResult(handled: true, actions: [.setMarked(displayedClause)])
             }
 
@@ -445,6 +511,9 @@ public final class SmartComposer {
                 let vniRes = coordinator.vniEngine.processKey(currentWord: dispTail, key: ch)
                 if vniRes.didTransform {
                     clauseVersion &+= 1
+                    pendingGeminiChanges = []
+                    focusedWordIndex = nil
+                    synthesizedFocusAlternative = nil
 
                     let wordIdx = wordCount(in: rawPrefix)
                     let baseAscii = VNIEngine.stripDiacritics(vniRes.newWord).lowercased()
@@ -468,6 +537,8 @@ public final class SmartComposer {
         // 4. Normal character (letters, digits, apostrophe, hyphen, underscore)
         if ch.isLetter || ch.isNumber || ch == "'" || ch == "-" || ch == "_" {
             clauseVersion &+= 1
+            pendingGeminiChanges = []
+            synthesizedFocusAlternative = nil
             rawClause.append(ch)
             displayedClause.append(ch)
             syncLockOfWordStillBeingTyped()
@@ -497,6 +568,9 @@ public final class SmartComposer {
         guard !rawClause.isEmpty else { return ComposerResult(handled: false) }
 
         clauseVersion &+= 1
+        pendingGeminiChanges = []
+        focusedWordIndex = nil
+        synthesizedFocusAlternative = nil
 
         rawClause.removeLast()
         if !displayedClause.isEmpty {
@@ -504,7 +578,7 @@ public final class SmartComposer {
         }
 
         // Drop locks beyond the current word count
-        let currentWords = rawClause.split(whereSeparator: { $0.isWhitespace }).count
+        let currentWords = wordCount(in: rawClause)
         lockedWords = lockedWords.filter { $0.key < currentWords }
 
         if rawClause.isEmpty {
@@ -528,7 +602,8 @@ public final class SmartComposer {
     }
 
     private func applyAlternativeCandidate(index: Int) -> [ComposerAction]? {
-        guard let alt = lastResult?.alternatives.last, index >= 0, index < alt.candidates.count else {
+        guard let alt = focusedAlternative ?? realAlternatives(in: lastResult).last,
+              index >= 0, index < alt.candidates.count else {
             return nil
         }
         let chosen = alt.candidates[index]
@@ -541,16 +616,28 @@ public final class SmartComposer {
         lockedWords[alt.wordIndex] = chosen
         displayedClause = updated
         clauseVersion &+= 1
+        focusedWordIndex = alt.wordIndex
+        pendingGeminiChanges = []
+        synthesizedFocusAlternative = nil
         return [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)]
     }
 
-    /// Applies a candidate clicked in the floating quick-fix popup. Same effect as `⌥1..5` for that surface,
-    /// including teaching the LearningStore, and hides the popup.
+    /// Applies a candidate clicked in the floating quick-fix popup. Same effect as `⌥1..5` for the focused
+    /// word, including teaching the LearningStore, and hides the popup.
     public func selectCandidate(_ surface: String) -> [ComposerAction] {
-        guard let alt = lastResult?.alternatives.last else { return [] }
+        guard let alt = focusedAlternative ?? realAlternatives(in: lastResult).last else { return [] }
         let target = surface.lowercased()
         guard let index = alt.candidates.firstIndex(where: { $0.lowercased() == target }) else { return [] }
         return applyAlternativeCandidate(index: index) ?? []
+    }
+
+    /// The popup's undo button: reverts only the pending Gemini changes when there are any, otherwise falls back
+    /// to the whole-clause `⌥Esc` behaviour.
+    public func undoCandidatePopup() -> [ComposerAction] {
+        if !pendingGeminiChanges.isEmpty {
+            return revertGeminiChanges()
+        }
+        return revertToRaw()
     }
 
     /// Reverts the composing clause to the raw ASCII text and teaches the store — same as `⌥Esc`.
@@ -597,16 +684,21 @@ public final class SmartComposer {
         guard !trimmed.isEmpty else { return actions }
 
         clauseVersion &+= 1
+        pendingGeminiChanges = []
         let versionSnapshot = clauseVersion
 
         let localRes = runLocalConversionPreservingLocks(raw: rawClause)
         displayedClause = localRes.convertedText
         lastResult = localRes
         manualConvertedVersion = versionSnapshot
-        actions.append(.hideCandidates)
+        focusedWordIndex = realAlternatives(in: localRes).last?.wordIndex
+        synthesizedFocusAlternative = nil
         actions.append(.setMarked(displayedClause))
-        if let candidate = candidateAction(for: localRes) {
+        if let focused = focusedAlternative,
+           let candidate = candidatePresentation(for: focused, showsImmediately: true) {
             actions.append(candidate)
+        } else {
+            actions.append(.hideCandidates)
         }
 
         let cfg = config
@@ -700,14 +792,46 @@ public final class SmartComposer {
 
         let trailingSpacesCount = request.raw.reversed().prefix(while: { $0 == " " }).count
         let trailingSpaces = String(repeating: " ", count: trailingSpacesCount)
+        let previousDisplayed = displayedClause
         let merged = applyLockedWords(to: result.convertedText) + trailingSpaces
         displayedClause = merged
         lastResult = result
         geminiRefinedVersion = request.version
 
-        var actions: [ComposerAction] = [.hideCandidates, .setMarked(merged)]
-        if let candidate = candidateAction(for: result) {
-            actions.append(candidate)
+        var actions: [ComposerAction] = [.setMarked(merged)]
+        var didShowCandidate = false
+
+        // Part C: explain what Gemini changed and let the user reject just those words.
+        let changes = Self.diffWords(previous: previousDisplayed, new: merged)
+        if let focusIndex = changes.map(\.wordIndex).max() {
+            pendingGeminiChanges = changes
+            focusedWordIndex = focusIndex
+            let alternative = alternativeForChangedWord(at: focusIndex, in: merged, result: result)
+            synthesizedFocusAlternative = result.alternatives.contains { $0.wordIndex == focusIndex }
+                ? nil
+                : alternative
+            if let candidate = candidatePresentation(
+                for: alternative,
+                geminiChanges: changes,
+                showsImmediately: true
+            ) {
+                actions.append(candidate)
+                didShowCandidate = true
+            }
+        } else {
+            // No change from Gemini: only surface an ambiguity the user just finished typing.
+            pendingGeminiChanges = []
+            synthesizedFocusAlternative = nil
+            focusedWordIndex = realAlternatives(in: result).last?.wordIndex
+            let completedWordIndex = wordCount(in: rawClause) - 1
+            if let focused = focusedAlternative, focused.wordIndex == completedWordIndex,
+               let candidate = candidatePresentation(for: focused, showsImmediately: true) {
+                actions.append(candidate)
+                didShowCandidate = true
+            }
+        }
+        if !didShowCandidate {
+            actions.append(.hideCandidates)
         }
         return actions
     }
@@ -785,6 +909,9 @@ public final class SmartComposer {
         clauseVersion &+= 1
         geminiRefinedVersion = 0
         manualConvertedVersion = 0
+        focusedWordIndex = nil
+        synthesizedFocusAlternative = nil
+        pendingGeminiChanges = []
         actions.append(.hideCandidates)
         actions.append(.statsChanged)
     }
@@ -797,11 +924,168 @@ public final class SmartComposer {
         recentCommittedContext = combined
     }
 
-    private func candidateAction(for result: ConversionResult) -> ComposerAction? {
-        guard config.showCandidateHUD, let alt = result.alternatives.last, alt.candidates.count > 1 else {
-            return nil
+    // MARK: - Candidate Focus
+
+    /// Ambiguous words (`>1` candidate) sorted by word index; the default focus is the last one.
+    private func realAlternatives(in result: ConversionResult?) -> [WordAlternative] {
+        guard let result else { return [] }
+        return result.alternatives
+            .filter { $0.candidates.count > 1 }
+            .sorted { $0.wordIndex < $1.wordIndex }
+    }
+
+    /// The word the popup and `⌥1..5` act on. Falls back to a synthetic alternative for changed words that have
+    /// no entry in the conversion result.
+    private var focusedAlternative: WordAlternative? {
+        guard let focusedWordIndex else { return nil }
+        if let match = lastResult?.alternatives.first(where: { $0.wordIndex == focusedWordIndex }) {
+            return match
         }
-        return .showCandidates(alt)
+        if let synthesizedFocusAlternative, synthesizedFocusAlternative.wordIndex == focusedWordIndex {
+            return synthesizedFocusAlternative
+        }
+        return nil
+    }
+
+    private func candidatePresentation(
+        for alternative: WordAlternative,
+        geminiChanges: [GeminiChange] = [],
+        showsImmediately: Bool
+    ) -> ComposerAction? {
+        guard config.showCandidateHUD else { return nil }
+        let range = utf16Range(ofWordAt: alternative.wordIndex, in: displayedClause)
+            ?? NSRange(location: (displayedClause as NSString).length, length: 0)
+        return .showCandidates(CandidatePresentation(
+            alternative: alternative,
+            focusedRange: range,
+            geminiChanges: geminiChanges,
+            showsImmediately: showsImmediately
+        ))
+    }
+
+    /// `⌥←` / `⌥→`: step the focus between ambiguous words and show the popup for the new one. Returns `nil`
+    /// when there is nothing to cycle, so the adapter does not consume the arrow.
+    private func cycleCandidateFocus(forward: Bool) -> [ComposerAction]? {
+        guard config.showCandidateHUD else { return nil }
+        guard !rawClause.isEmpty else { return nil }
+        let alternatives = realAlternatives(in: lastResult)
+        guard !alternatives.isEmpty else { return nil }
+
+        let nextPosition: Int
+        if let current = alternatives.firstIndex(where: { $0.wordIndex == focusedWordIndex }) {
+            nextPosition = forward ? min(current + 1, alternatives.count - 1) : max(current - 1, 0)
+        } else {
+            nextPosition = forward ? 0 : alternatives.count - 1
+        }
+
+        let alternative = alternatives[nextPosition]
+        focusedWordIndex = alternative.wordIndex
+        synthesizedFocusAlternative = nil
+        guard let candidate = candidatePresentation(
+            for: alternative,
+            geminiChanges: pendingGeminiChanges,
+            showsImmediately: true
+        ) else {
+            return []
+        }
+        return [candidate]
+    }
+
+    // MARK: - Gemini Changes
+
+    /// Word-by-word diff between what was displayed before a refinement and the merged result.
+    private static func diffWords(previous: String, new: String) -> [GeminiChange] {
+        let previousWords = TextSegmenter.wordTokens(from: previous)
+        let newWords = TextSegmenter.wordTokens(from: new)
+        guard !previousWords.isEmpty, previousWords.count == newWords.count else { return [] }
+        return (0..<previousWords.count).compactMap { index in
+            guard previousWords[index] != newWords[index] else { return nil }
+            return GeminiChange(wordIndex: index, from: previousWords[index], to: newWords[index])
+        }
+    }
+
+    private func alternativeForChangedWord(at index: Int, in text: String, result: ConversionResult) -> WordAlternative {
+        if let existing = result.alternatives.first(where: { $0.wordIndex == index }) {
+            return existing
+        }
+        let tokens = TextSegmenter.wordTokens(from: text)
+        let newSurface = index < tokens.count ? tokens[index] : ""
+        let previous = pendingGeminiChanges.first { $0.wordIndex == index }?.from ?? newSurface
+        var candidates = [newSurface]
+        if !previous.isEmpty, previous.lowercased() != newSurface.lowercased() {
+            candidates.append(previous)
+        }
+        if candidates.isEmpty { candidates = [newSurface] }
+        return WordAlternative(
+            wordIndex: index,
+            baseWord: VNIEngine.stripDiacritics(previous).lowercased(),
+            selected: newSurface,
+            candidates: candidates
+        )
+    }
+
+    /// `⌥Esc` / popup "Hoàn tác" while Gemini changes are pending: restore only the changed words, lock them,
+    /// teach the store, and keep the clause composing.
+    private func revertGeminiChanges() -> [ComposerAction] {
+        guard !pendingGeminiChanges.isEmpty else { return [] }
+        let changes = pendingGeminiChanges.sorted { $0.wordIndex < $1.wordIndex }
+
+        // Restore every changed word first, then learn against the final surrounding surfaces.
+        for change in changes {
+            displayedClause = replacingWord(at: change.wordIndex, with: change.from, in: displayedClause)
+            lockedWords[change.wordIndex] = change.from
+        }
+        let words = TextSegmenter.wordTokens(from: displayedClause)
+
+        for change in changes {
+            let base = VNIEngine.stripDiacritics(change.from).lowercased()
+            let newBase = VNIEngine.stripDiacritics(change.to).lowercased()
+            guard !base.isEmpty, base == newBase else { continue }
+            let prev1 = change.wordIndex >= 1 && change.wordIndex - 1 < words.count
+                ? words[change.wordIndex - 1].lowercased()
+                : nil
+            let prev2 = change.wordIndex >= 2 && change.wordIndex - 2 < words.count
+                ? words[change.wordIndex - 2].lowercased()
+                : nil
+            let next1 = change.wordIndex + 1 < words.count ? words[change.wordIndex + 1].lowercased() : nil
+            coordinator.store.recordUserCorrection(
+                baseWord: base,
+                chosenSurface: change.from,
+                prev1: prev1,
+                prev2: prev2,
+                next1: next1
+            )
+        }
+
+        pendingGeminiChanges = []
+        focusedWordIndex = nil
+        synthesizedFocusAlternative = nil
+        clauseVersion &+= 1
+        return [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)]
+    }
+
+    private func replacingWord(at wordIndex: Int, with surface: String, in text: String) -> String {
+        var result = ""
+        for segment in TextSegmenter.segment(text) {
+            if segment.isWord && segment.wordIndex == wordIndex {
+                result.append(surface)
+            } else {
+                result.append(segment.raw)
+            }
+        }
+        return result
+    }
+
+    /// UTF-16 range of a word in the marked text, punctuation-aware via `TextSegmenter`.
+    private func utf16Range(ofWordAt wordIndex: Int, in text: String) -> NSRange? {
+        var location = 0
+        for segment in TextSegmenter.segment(text) {
+            if segment.isWord && segment.wordIndex == wordIndex {
+                return NSRange(location: location, length: segment.raw.utf16.count)
+            }
+            location += segment.raw.utf16.count
+        }
+        return nil
     }
 
     // MARK: - Word Utilities
@@ -812,7 +1096,7 @@ public final class SmartComposer {
         guard !lockedWords.isEmpty else { return }
         let wordIdx = wordCount(in: rawClause) - 1
         guard wordIdx >= 0, lockedWords[wordIdx] != nil else { return }
-        let (_, tail) = splitLastWord(displayedClause)
+        guard let tail = TextSegmenter.wordTokens(from: displayedClause).last else { return }
         lockedWords[wordIdx] = tail
     }
 
@@ -824,32 +1108,20 @@ public final class SmartComposer {
         return ("", text)
     }
 
+    /// Word count with the same tokenizer the engine uses for `WordAlternative.wordIndex`, so every lock,
+    /// focus and Gemini-change index refers to the same word (e.g. `e-mail` is two words everywhere).
     private func wordCount(in text: String) -> Int {
-        text.split(whereSeparator: { $0.isWhitespace }).count
+        TextSegmenter.wordTokens(from: text).count
     }
 
     private func applyLockedWords(to text: String) -> String {
         guard !lockedWords.isEmpty else { return text }
         var result = ""
-        var wordIdx = 0
-        var idx = text.startIndex
-
-        while idx < text.endIndex {
-            if text[idx].isWhitespace {
-                result.append(text[idx])
-                idx = text.index(after: idx)
+        for segment in TextSegmenter.segment(text) {
+            if segment.isWord, let locked = lockedWords[segment.wordIndex] {
+                result.append(locked)
             } else {
-                let start = idx
-                while idx < text.endIndex && !text[idx].isWhitespace {
-                    idx = text.index(after: idx)
-                }
-                let token = String(text[start..<idx])
-                if let locked = lockedWords[wordIdx] {
-                    result.append(locked)
-                } else {
-                    result.append(token)
-                }
-                wordIdx += 1
+                result.append(segment.raw)
             }
         }
         return result

@@ -24,6 +24,14 @@ final class KodauIMController: IMKInputController {
     /// In-flight debounced Gemini refinement (one per controller).
     private var refinementTask: Task<Void, Never>?
 
+    /// Pending debounced candidate popup show (automatic popups wait for a typing pause).
+    private var pendingCandidateShow: DispatchWorkItem?
+    /// Candidate popup currently on screen, used to update it in place instead of hiding and re-showing.
+    private var visiblePresentation: CandidatePresentation?
+    /// UTF-16 range of the word underlined thicker while the popup is visible.
+    private var popupHighlightRange: NSRange?
+    private static let candidateShowDelay: TimeInterval = 0.3
+
     /// Weak reference to the latest active client for async marked-text updates.
     private weak var activeClientObject: AnyObject?
 
@@ -98,6 +106,9 @@ final class KodauIMController: IMKInputController {
         runtime.reloadConfigIfNeeded()
         activeClientObject = sender as AnyObject?
 
+        // Any key cancels a pending automatic popup: it only appears after a real typing pause.
+        cancelPendingCandidateShow()
+
         if handleCorrectionToastHotkey(event) {
             return true
         }
@@ -149,8 +160,8 @@ final class KodauIMController: IMKInputController {
             case .backgroundDistill(let raw, let context):
                 backgroundDistill(raw: raw, context: context)
 
-            case .showCandidates(let alternative):
-                showCandidatePopup(alternative, client: sender)
+            case .showCandidates(let presentation):
+                showCandidatePopup(presentation, client: sender)
 
             case .hideCandidates:
                 hideCandidatePopup()
@@ -221,13 +232,53 @@ final class KodauIMController: IMKInputController {
             popup.onUndo = { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, let client = self.activeClientObject else { return }
-                    self.apply(self.composer.revertToRaw(), client: client)
+                    self.apply(self.composer.undoCandidatePopup(), client: client)
+                }
+            }
+            // The popup hides itself after 5 s or on a click: drop the focused-word highlight again.
+            popup.onHide = { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let hadHighlight = self.popupHighlightRange != nil
+                    self.popupHighlightRange = nil
+                    self.visiblePresentation = nil
+                    guard hadHighlight, let client = self.activeClientObject else { return }
+                    self.setMarked(self.composer.markedText, client: client)
                 }
             }
         }
     }
 
-    private func showCandidatePopup(_ alternative: WordAlternative, client sender: Any!) {
+    private func showCandidatePopup(_ presentation: CandidatePresentation, client sender: Any!) {
+        pendingCandidateShow?.cancel()
+        pendingCandidateShow = nil
+
+        // Explicit focus moves and Gemini results show at once; automatic Space popups wait for a pause.
+        if presentation.showsImmediately || isShowingSameCandidate(presentation) {
+            presentCandidatePopup(presentation, client: sender)
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pendingCandidateShow = nil
+                guard let client = self.activeClientObject else { return }
+                self.presentCandidatePopup(presentation, client: client)
+            }
+        }
+        pendingCandidateShow = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.candidateShowDelay, execute: work)
+    }
+
+    private func presentCandidatePopup(_ presentation: CandidatePresentation, client sender: Any!) {
+        popupHighlightRange = presentation.focusedRange
+        let marked = composer.markedText
+        if !marked.isEmpty {
+            setMarked(marked, highlight: presentation.focusedRange, client: sender)
+        }
+        visiblePresentation = presentation
+
         var caretRect = NSRect.zero
         if let textInput = sender as? IMKTextInput {
             let selection = textInput.selectedRange()
@@ -235,11 +286,27 @@ final class KodauIMController: IMKInputController {
             _ = textInput.attributes(forCharacterIndex: index, lineHeightRectangle: &caretRect)
         }
         MainActor.assumeIsolated {
-            CandidatePopupController.shared.show(alternative: alternative, near: caretRect)
+            CandidatePopupController.shared.show(presentation, near: caretRect)
         }
     }
 
+    /// True when the visible popup already targets the same word with the same candidates: refresh in place.
+    private func isShowingSameCandidate(_ presentation: CandidatePresentation) -> Bool {
+        let isVisible = MainActor.assumeIsolated { CandidatePopupController.shared.isVisible }
+        guard isVisible, let current = visiblePresentation else { return false }
+        return current.alternative.wordIndex == presentation.alternative.wordIndex
+            && current.alternative.baseWord == presentation.alternative.baseWord
+            && current.alternative.candidates == presentation.alternative.candidates
+            && current.geminiChanges == presentation.geminiChanges
+    }
+
+    private func cancelPendingCandidateShow() {
+        pendingCandidateShow?.cancel()
+        pendingCandidateShow = nil
+    }
+
     private func hideCandidatePopup() {
+        cancelPendingCandidateShow()
         MainActor.assumeIsolated {
             CandidatePopupController.shared.hide()
         }
@@ -247,16 +314,27 @@ final class KodauIMController: IMKInputController {
 
     // MARK: - Marked Text Helpers
 
-    private func setMarked(_ text: String, client sender: Any!) {
+    private func setMarked(_ text: String, highlight: NSRange? = nil, client sender: Any!) {
         guard let textInput = sender as? IMKTextInput else { return }
         let attrs: [NSAttributedString.Key: Any] = [
             .underlineStyle: NSUnderlineStyle.single.rawValue,
             .underlineColor: NSColor.controlAccentColor.withAlphaComponent(0.75)
         ]
-        let attrStr = NSAttributedString(string: text, attributes: attrs)
-        let selRange = NSRange(location: text.utf16.count, length: 0)
+        let attributed = NSMutableAttributedString(string: text, attributes: attrs)
+        let length = (text as NSString).length
+        if let highlight, highlight.location != NSNotFound, highlight.length > 0,
+           NSMaxRange(highlight) <= length {
+            attributed.addAttributes(
+                [
+                    .underlineStyle: NSUnderlineStyle.thick.rawValue,
+                    .underlineColor: NSColor.controlAccentColor.withAlphaComponent(0.95)
+                ],
+                range: highlight
+            )
+        }
+        let selRange = NSRange(location: length, length: 0)
         let repRange = NSRange(location: NSNotFound, length: 0)
-        textInput.setMarkedText(attrStr, selectionRange: selRange, replacementRange: repRange)
+        textInput.setMarkedText(attributed, selectionRange: selRange, replacementRange: repRange)
     }
 
     private func clearMarked(client sender: Any!) {

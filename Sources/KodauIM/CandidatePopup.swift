@@ -13,19 +13,22 @@ final class CandidatePopupController {
 
     private var panel: NSPanel?
     private var autoHideTimer: Timer?
+    private var isHovering = false
 
     var onSelectCandidate: ((String) -> Void)?
     var onUndo: (() -> Void)?
+    /// Called whenever the panel actually leaves the screen (timer, click, explicit hide).
+    var onHide: (() -> Void)?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
     private init() {}
 
-    func show(alternative: WordAlternative, near caretRect: NSRect?) {
+    func show(_ presentation: CandidatePresentation, near caretRect: NSRect?) {
         autoHideTimer?.invalidate()
 
         let hudView = CandidateHUDView(
-            alternative: alternative,
+            presentation: presentation,
             onSelect: { [weak self] candidate in
                 self?.hide()
                 self?.onSelectCandidate?(candidate)
@@ -36,6 +39,9 @@ final class CandidatePopupController {
             },
             onClose: { [weak self] in
                 self?.hide()
+            },
+            onHover: { [weak self] hovering in
+                self?.setHovering(hovering)
             }
         )
 
@@ -56,18 +62,41 @@ final class CandidatePopupController {
         panel.alphaValue = 1.0
         panel.orderFrontRegardless()
 
-        autoHideTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hide() }
-        }
+        restartAutoHideTimer()
     }
 
     func hide() {
         autoHideTimer?.invalidate()
         autoHideTimer = nil
+        isHovering = false
+        let wasVisible = panel?.isVisible ?? false
         panel?.orderOut(nil)
+        if wasVisible {
+            onHide?()
+        }
     }
 
     // MARK: - Private
+
+    private func restartAutoHideTimer() {
+        autoHideTimer?.invalidate()
+        autoHideTimer = nil
+        guard !isHovering else { return }
+        autoHideTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hide() }
+        }
+    }
+
+    private func setHovering(_ hovering: Bool) {
+        guard hovering != isHovering else { return }
+        isHovering = hovering
+        if hovering {
+            autoHideTimer?.invalidate()
+            autoHideTimer = nil
+        } else if panel?.isVisible == true {
+            restartAutoHideTimer()
+        }
+    }
 
     private func screen(for caretRect: NSRect?) -> NSScreen? {
         if let rect = caretRect, rect != .zero {
@@ -103,24 +132,37 @@ final class CandidatePopupController {
 }
 
 private struct CandidateHUDView: View {
-    let alternative: WordAlternative
+    let presentation: CandidatePresentation
     let onSelect: (String) -> Void
     let onUndo: () -> Void
     let onClose: () -> Void
+    let onHover: (Bool) -> Void
+
+    private var alternative: WordAlternative { presentation.alternative }
+    private var isGeminiChange: Bool { !presentation.geminiChanges.isEmpty }
+
+    private var changeSummary: String {
+        let items = presentation.geminiChanges.prefix(3).map { "\($0.from) → \($0.to)" }
+        return "Gemini: " + items.joined(separator: ", ")
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.blue)
-                Text(alternative.baseWord)
+                    .foregroundStyle(isGeminiChange ? .orange : .blue)
+                Text(isGeminiChange ? changeSummary : alternative.baseWord)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.06), in: Capsule())
+            .background(
+                (isGeminiChange ? Color.orange : Color.primary).opacity(0.10),
+                in: Capsule()
+            )
 
             Divider()
                 .frame(height: 18)
@@ -159,7 +201,7 @@ private struct CandidateHUDView: View {
                 HStack(spacing: 3) {
                     Text("⌥Esc")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    Text("giữ gốc")
+                    Text(isGeminiChange ? "Hoàn tác" : "giữ gốc")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(.secondary)
@@ -168,7 +210,9 @@ private struct CandidateHUDView: View {
                 .background(Color.primary.opacity(0.05), in: Capsule())
             }
             .buttonStyle(.plain)
-            .help("Hoàn tác về từ không dấu / tiếng Anh và dạy Kodau ghi nhớ")
+            .help(isGeminiChange
+                  ? "Hoàn tác các từ Gemini vừa đổi"
+                  : "Hoàn tác về từ không dấu / tiếng Anh và dạy Kodau ghi nhớ")
 
             Button {
                 onClose()
@@ -188,5 +232,8 @@ private struct CandidateHUDView: View {
                 .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
         )
         .padding(4)
+        .onHover { hovering in
+            onHover(hovering)
+        }
     }
 }

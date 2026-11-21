@@ -57,22 +57,30 @@ final class SmartComposerTests {
     }
 
     private func candidate(in actions: [ComposerAction]) -> WordAlternative? {
+        presentation(in: actions)?.alternative
+    }
+
+    private func presentation(in actions: [ComposerAction]) -> CandidatePresentation? {
         for action in actions {
-            if case .showCandidates(let alternative) = action {
-                return alternative
+            if case .showCandidates(let presentation) = action {
+                return presentation
             }
         }
         return nil
     }
 
-    private func refinementResult(_ text: String, _ converted: String) -> ConversionResult {
+    private func refinementResult(
+        _ text: String,
+        _ converted: String,
+        alternatives: [WordAlternative] = []
+    ) -> ConversionResult {
         ConversionResult(
             originalText: text,
             convertedText: converted,
             confidence: 0.92,
             source: .geminiAPI,
             vietnameseRatio: 1.0,
-            alternatives: [],
+            alternatives: alternatives,
             latencyMs: 1
         )
     }
@@ -388,4 +396,150 @@ final class SmartComposerTests {
 
         #expect(actions.isEmpty)
     }
+
+    // MARK: - Focused Candidate (Part A)
+
+    @Test("Space only auto-shows the popup when the just-completed word is ambiguous")
+    func popupOnlyForJustCompletedWord() {
+        let composer = makeComposer()
+        type("ban tieng", into: composer)
+
+        let space = composer.handleKey(key(" "))
+
+        #expect(space.handled == true)
+        #expect(presentation(in: space.actions) == nil)
+    }
+
+    @Test("Space auto-shows the popup for the last word when it is ambiguous")
+    func popupForAmbiguousLastWord() {
+        let composer = makeComposer()
+        type("ban", into: composer)
+
+        let space = composer.handleKey(key(" "))
+
+        let shown = presentation(in: space.actions)
+        #expect(shown != nil)
+        #expect(shown?.alternative.wordIndex == 0)
+    }
+
+    @Test("Option+Left/Right cycle the focused ambiguous word and aren't consumed without a buffer")
+    func optionArrowsCycleFocus() {
+        let empty = makeComposer()
+        for keyCode: UInt16 in [123, 124] {
+            let result = empty.handleKey(ComposerKey(keyCode: keyCode, modifiers: [.option]))
+            #expect(result.handled == false)
+            #expect(result.actions.isEmpty)
+        }
+
+        let composer = makeComposer()
+        type("sac huyen hoi nga nang", into: composer)
+        let spaced = composer.handleKey(key(" "))
+        #expect(presentation(in: spaced.actions)?.alternative.wordIndex == 4)
+
+        let left = composer.handleKey(ComposerKey(keyCode: 123, modifiers: [.option]))
+        #expect(left.handled == true)
+        #expect(presentation(in: left.actions)?.alternative.wordIndex == 3)
+        #expect(presentation(in: left.actions)?.showsImmediately == true)
+
+        let leftAgain = composer.handleKey(ComposerKey(keyCode: 123, modifiers: [.option]))
+        #expect(presentation(in: leftAgain.actions)?.alternative.wordIndex == 2)
+
+        let right = composer.handleKey(ComposerKey(keyCode: 124, modifiers: [.option]))
+        #expect(presentation(in: right.actions)?.alternative.wordIndex == 3)
+
+        // ⌥2 now applies to word 3 ("ngã"), whose second candidate is "nga".
+        let applied = composer.handleKey(ComposerKey(keyCode: 19, characters: "2", modifiers: [.option]))
+        #expect(applied.handled == true)
+        let tokens = composer.markedText.split(separator: " ").map(String.init)
+        #expect(tokens.count == 5)
+        #expect(tokens[3] == "nga")
+    }
+
+    @Test("Focused range highlights the right UTF-16 word including diacritics")
+    func focusedRangeMatchesWord() {
+        let composer = makeComposer()
+        type("ban", into: composer)
+        let space = composer.handleKey(key(" "))
+        guard let shown = presentation(in: space.actions) else {
+            Issue.record("expected a candidate presentation")
+            return
+        }
+
+        let marked = composer.markedText
+        let firstWord = String(marked.split(separator: " ").first ?? "")
+        let highlighted = (marked as NSString).substring(with: shown.focusedRange)
+
+        #expect(shown.focusedRange.location == 0)
+        #expect(highlighted == firstWord)
+        #expect(shown.focusedRange.length == (firstWord as NSString).length)
+        #expect(firstWord.unicodeScalars.contains { $0.value > 0x7F })
+    }
+
+    // MARK: - Gemini Changes (Part C)
+
+    @Test("A refinement that changes a word reports the change and focuses that word")
+    func refinementReportsGeminiChanges() {
+        let composer = makeComposer(AppConfig(brainStrategy: .cloudFirst, geminiAPIKey: "test-key"))
+        type("hom nay", into: composer)
+        let space = composer.handleKey(key(" "))
+        guard let request = scheduledRequest(in: space.actions) else {
+            Issue.record("expected a scheduled refinement")
+            return
+        }
+        #expect(composer.markedText == "hôm nay ")
+
+        let changed = composer.applyRefinement(refinementResult(request.raw, "hôm này"), for: request)
+        guard let shown = presentation(in: changed) else {
+            Issue.record("expected a candidate presentation for the Gemini change")
+            return
+        }
+
+        #expect(shown.geminiChanges == [GeminiChange(wordIndex: 1, from: "nay", to: "này")])
+        #expect(shown.alternative.wordIndex == 1)
+        #expect(shown.showsImmediately == true)
+        #expect(composer.markedText == "hôm này ")
+    }
+
+    @Test("Option+Escape after a Gemini change reverts only that word, keeps composing, and locks it")
+    func optionEscapeRevertsOnlyGeminiChanges() {
+        let composer = makeComposer(AppConfig(brainStrategy: .cloudFirst, geminiAPIKey: "test-key"))
+        type("hom nay", into: composer)
+        let space = composer.handleKey(key(" "))
+        guard let request = scheduledRequest(in: space.actions) else {
+            Issue.record("expected a scheduled refinement")
+            return
+        }
+        _ = composer.applyRefinement(refinementResult(request.raw, "hôm này"), for: request)
+        #expect(composer.markedText == "hôm này ")
+
+        let revert = composer.handleKey(ComposerKey(keyCode: 53, characters: "\u{1B}", modifiers: [.option]))
+
+        #expect(revert.handled == true)
+        #expect(commits(in: revert.actions).isEmpty)
+        #expect(composer.hasActiveBuffer == true)
+        #expect(composer.markedText == "hôm nay ")
+
+        let learned = store.bigramCandidates(prevSurface: "hôm", baseWord: "nay")
+        #expect(learned.contains { $0.surface.lowercased() == "nay" && $0.userVerified })
+
+        // A later refinement must not undo the user's revert: the word is locked.
+        let more = type("x ", into: composer)
+        guard let nextRequest = scheduledRequest(in: more) else {
+            Issue.record("expected a subsequent scheduled refinement")
+            return
+        }
+        _ = composer.applyRefinement(
+            refinementResult(nextRequest.raw, "hôm này x"),
+            for: nextRequest
+        )
+        #expect(composer.markedText == "hôm nay x ")
+    }
+
+    @Test("Word locks after a hyphenated word stay on the right word")
+    func locksAfterHyphenatedWord() {
+        let composer = makeComposer()
+        _ = type("check e-mail ban5 nhe", into: composer)
+        #expect(composer.markedText.contains("e-mail bạn"), "got: \(composer.markedText)")
+    }
+
 }
