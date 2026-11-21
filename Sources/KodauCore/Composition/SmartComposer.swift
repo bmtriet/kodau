@@ -261,6 +261,9 @@ public final class SmartComposer {
     private func handleVNICharacter(_ ch: Character) -> ComposerResult {
         if ch.isLetter || ch.isNumber {
             let result = coordinator.vniEngine.processKey(currentWord: vniWordBuffer, key: ch)
+            // Every keystroke that changes the VNI buffer invalidates any in-flight refinement (e.g. the one
+            // scheduled by `triggerManualVNIConversion`), otherwise a stale result could overwrite newer input.
+            clauseVersion &+= 1
             vniWordBuffer = result.newWord
             return ComposerResult(handled: true, actions: [.setMarked(vniWordBuffer)])
         }
@@ -360,7 +363,7 @@ public final class SmartComposer {
             let localRes = runLocalConversionPreservingLocks(raw: rawClause)
             displayedClause = localRes.convertedText
             lastResult = localRes
-            var actions: [ComposerAction] = [.setMarked(displayedClause)]
+            var actions: [ComposerAction] = [.hideCandidates, .setMarked(displayedClause)]
             if let candidate = candidateAction(for: localRes) {
                 actions.append(candidate)
             }
@@ -457,7 +460,7 @@ public final class SmartComposer {
                         prev1: prevWords.last?.lowercased(),
                         prev2: prevWords.count >= 2 ? prevWords[prevWords.count - 2].lowercased() : nil
                     )
-                    return ComposerResult(handled: true, actions: [.cancelRefinement, .setMarked(displayedClause)])
+                    return ComposerResult(handled: true, actions: [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)])
                 }
             }
         }
@@ -468,7 +471,7 @@ public final class SmartComposer {
             rawClause.append(ch)
             displayedClause.append(ch)
             syncLockOfWordStillBeingTyped()
-            return ComposerResult(handled: true, actions: [.cancelRefinement, .setMarked(displayedClause)])
+            return ComposerResult(handled: true, actions: [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)])
         }
 
         // 5. Any other symbol (e.g., quotes, brackets, operators): commit current clause and let symbol pass through
@@ -483,6 +486,7 @@ public final class SmartComposer {
     private func handleBackspace(mode: TypingMode) -> ComposerResult {
         if mode == .vni {
             guard !vniWordBuffer.isEmpty else { return ComposerResult(handled: false) }
+            clauseVersion &+= 1
             vniWordBuffer.removeLast()
             if vniWordBuffer.isEmpty {
                 return ComposerResult(handled: true, actions: [.clearMarked])
@@ -520,7 +524,7 @@ public final class SmartComposer {
                 lastResult = res
             }
         }
-        return ComposerResult(handled: true, actions: [.cancelRefinement, .setMarked(displayedClause)])
+        return ComposerResult(handled: true, actions: [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)])
     }
 
     private func applyAlternativeCandidate(index: Int) -> [ComposerAction]? {
@@ -537,7 +541,22 @@ public final class SmartComposer {
         lockedWords[alt.wordIndex] = chosen
         displayedClause = updated
         clauseVersion &+= 1
-        return [.setMarked(displayedClause)]
+        return [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)]
+    }
+
+    /// Applies a candidate clicked in the floating quick-fix popup. Same effect as `⌥1..5` for that surface,
+    /// including teaching the LearningStore, and hides the popup.
+    public func selectCandidate(_ surface: String) -> [ComposerAction] {
+        guard let alt = lastResult?.alternatives.last else { return [] }
+        let target = surface.lowercased()
+        guard let index = alt.candidates.firstIndex(where: { $0.lowercased() == target }) else { return [] }
+        return applyAlternativeCandidate(index: index) ?? []
+    }
+
+    /// Reverts the composing clause to the raw ASCII text and teaches the store — same as `⌥Esc`.
+    public func revertToRaw() -> [ComposerAction] {
+        guard !rawClause.isEmpty else { return [] }
+        return revertAndCommitRawASCII()
     }
 
     private func revertAndCommitRawASCII() -> [ComposerAction] {
@@ -584,6 +603,7 @@ public final class SmartComposer {
         displayedClause = localRes.convertedText
         lastResult = localRes
         manualConvertedVersion = versionSnapshot
+        actions.append(.hideCandidates)
         actions.append(.setMarked(displayedClause))
         if let candidate = candidateAction(for: localRes) {
             actions.append(candidate)
@@ -685,7 +705,7 @@ public final class SmartComposer {
         lastResult = result
         geminiRefinedVersion = request.version
 
-        var actions: [ComposerAction] = [.setMarked(merged)]
+        var actions: [ComposerAction] = [.hideCandidates, .setMarked(merged)]
         if let candidate = candidateAction(for: result) {
             actions.append(candidate)
         }

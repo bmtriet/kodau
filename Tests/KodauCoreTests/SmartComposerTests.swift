@@ -56,6 +56,15 @@ final class SmartComposerTests {
         return nil
     }
 
+    private func candidate(in actions: [ComposerAction]) -> WordAlternative? {
+        for action in actions {
+            if case .showCandidates(let alternative) = action {
+                return alternative
+            }
+        }
+        return nil
+    }
+
     private func refinementResult(_ text: String, _ converted: String) -> ConversionResult {
         ConversionResult(
             originalText: text,
@@ -285,5 +294,98 @@ final class SmartComposerTests {
         #expect(request != nil)
         #expect(request?.delayMs == 450)
         #expect(request?.force == false)
+    }
+
+    // MARK: - Candidate Popup
+
+    @Test("selectCandidate applies the chosen surface and teaches the store")
+    func selectCandidateAppliesAndLearns() {
+        let composer = makeComposer()
+        let typed = type("ban ", into: composer)
+        guard let alternative = candidate(in: typed) else {
+            Issue.record("expected a .showCandidates action for the ambiguous word `ban`")
+            return
+        }
+        guard let chosen = alternative.candidates.first(where: {
+            $0.lowercased() != alternative.selected.lowercased()
+        }) else {
+            Issue.record("expected more than one candidate")
+            return
+        }
+
+        let applied = composer.selectCandidate(chosen)
+
+        #expect(applied.contains(.hideCandidates))
+        #expect(composer.markedText.lowercased().contains(chosen.lowercased()))
+        let learned = store.bigramCandidates(
+            prevSurface: LearningStore.sentenceStartToken,
+            baseWord: "ban"
+        )
+        #expect(learned.contains { $0.surface.lowercased() == chosen.lowercased() && $0.userVerified })
+    }
+
+    @Test("revertToRaw commits the raw ASCII clause")
+    func revertToRawCommitsRaw() {
+        let composer = makeComposer()
+        type("hom nay", into: composer)
+
+        let actions = composer.revertToRaw()
+
+        #expect(commits(in: actions) == ["hom nay"])
+        #expect(composer.hasActiveBuffer == false)
+    }
+
+    @Test("Committing the clause hides the candidate popup")
+    func commitHidesCandidates() {
+        let composer = makeComposer()
+        let typed = type("ban ", into: composer)
+        guard candidate(in: typed) != nil else {
+            Issue.record("expected a .showCandidates action for the ambiguous word `ban`")
+            return
+        }
+
+        let result = composer.handleKey(ComposerKey(keyCode: 36, characters: "\r"))
+
+        #expect(result.actions.contains(.hideCandidates))
+    }
+
+    @Test("Typing after showing candidates hides the popup")
+    func continuedTypingHidesCandidates() {
+        let composer = makeComposer()
+        let typed = type("ban ", into: composer)
+        guard candidate(in: typed) != nil else {
+            Issue.record("expected a .showCandidates action for the ambiguous word `ban`")
+            return
+        }
+
+        let result = composer.handleKey(key("x"))
+
+        #expect(result.actions.contains(.hideCandidates))
+    }
+
+    // MARK: - Stale VNI Refinement
+
+    @Test("VNI refinement scheduled by Option+Space is dropped after more VNI typing")
+    func staleVNIRefinementIgnored() {
+        let composer = makeComposer(AppConfig(
+            typingMode: .vni,
+            brainStrategy: .cloudFirst,
+            geminiAPIKey: "test-key"
+        ))
+        type("tieng", into: composer)
+
+        let manual = composer.handleKey(
+            ComposerKey(keyCode: 49, characters: " ", modifiers: [.option])
+        )
+        guard let request = scheduledRequest(in: manual.actions) else {
+            Issue.record("expected Option+Space to schedule a refinement")
+            return
+        }
+
+        type("x", into: composer)
+
+        let actions = composer.applyRefinement(refinementResult("tieng", "tiếng"), for: request)
+
+        #expect(actions.isEmpty)
     }
 }
