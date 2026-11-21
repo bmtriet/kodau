@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Stable local signing identity (see scripts/setup_signing.sh); falls back to ad-hoc ("-") when absent.
+SIGN_IDENTITY="${KODAU_SIGN_IDENTITY:-Kodau Local Code Signing}"
+if security find-identity -p codesigning 2>/dev/null | grep -q "\"${SIGN_IDENTITY}\""; then
+    SIGN_ARG="${SIGN_IDENTITY}"
+else
+    SIGN_ARG="-"
+    echo "Note: '${SIGN_IDENTITY}' not found, signing ad-hoc. Run ./scripts/setup_signing.sh once so macOS keeps the Accessibility permission across rebuilds."
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build"
@@ -206,8 +215,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-echo "==> Ad-hoc code signing ${APP_BUNDLE}..."
-codesign --force --deep --sign - "${APP_BUNDLE}"
+echo "==> Code signing ${APP_BUNDLE} (identity: ${SIGN_ARG})..."
+codesign --force --deep --sign "${SIGN_ARG}" "${APP_BUNDLE}"
 
 echo ""
 echo "✅ Built successfully: ${APP_BUNDLE}"

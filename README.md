@@ -45,15 +45,13 @@ Kodau không lưu luật kiểu "`ban` luôn là `bạn`". Mỗi lần học, n�
 ## Build & Chạy ứng dụng
 
 ```bash
-# Chạy unit test
-swift test
-
-# Đóng gói ứng dụng macOS (build/Kodau.app)
-./scripts/build_app.sh
-
-# Mở ứng dụng
+make signing   # 1 lần duy nhất: tạo chứng chỉ ký cục bộ để macOS giữ quyền Trợ năng qua các lần build
+make test      # chạy unit test (tự dùng Xcode nếu có — CommandLineTools thiếu module Testing)
+make install   # build + cài bộ gõ KodauIM vào ~/Library/Input Methods và đóng gói build/Kodau.app
 open build/Kodau.app
 ```
+
+Checklist chạy thử trên máy thật: [docs/TEST_CHECKLIST.md](docs/TEST_CHECKLIST.md).
 
 ## Cấp quyền macOS (để gõ toàn hệ thống)
 

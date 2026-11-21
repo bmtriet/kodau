@@ -126,11 +126,12 @@ final class KodauIMRuntime {
     }
 
     func openDashboardApp() {
+        // `KodauDashboardAppPath` is written into Info.plist by scripts/install_im.sh (the repo's build/Kodau.app).
+        let devBuildPath = Bundle.main.object(forInfoDictionaryKey: "KodauDashboardAppPath") as? String
         let candidates = [
             "/Applications/Kodau.app",
-            NSHomeDirectory() + "/Applications/Kodau.app",
-            "/Users/admin/Desktop/Projects/AGI-kodau/build/Kodau.app"
-        ]
+            NSHomeDirectory() + "/Applications/Kodau.app"
+        ] + [devBuildPath].compactMap { $0 }
         for path in candidates where FileManager.default.fileExists(atPath: path) {
             let url = URL(fileURLWithPath: path)
             let config = NSWorkspace.OpenConfiguration()

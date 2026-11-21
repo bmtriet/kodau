@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Stable local signing identity (see scripts/setup_signing.sh); falls back to ad-hoc ("-") when absent.
+SIGN_IDENTITY="${KODAU_SIGN_IDENTITY:-Kodau Local Code Signing}"
+if security find-identity -p codesigning 2>/dev/null | grep -q "\"${SIGN_IDENTITY}\""; then
+    SIGN_ARG="${SIGN_IDENTITY}"
+else
+    SIGN_ARG="-"
+    echo "Note: '${SIGN_IDENTITY}' not found, signing ad-hoc. Run ./scripts/setup_signing.sh once so macOS keeps the Accessibility permission across rebuilds."
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build"
@@ -180,6 +189,8 @@ cat > "${IM_CONTENTS}/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+/usr/libexec/PlistBuddy -c "Add :KodauDashboardAppPath string ${BUILD_DIR}/Kodau.app" "${IM_CONTENTS}/Info.plist"
+
 cat > "${IM_RESOURCES}/en.lproj/InfoPlist.strings" <<'STRINGS'
 "CFBundleName" = "Kodau";
 "CFBundleDisplayName" = "Kodau";
@@ -194,8 +205,8 @@ cat > "${IM_RESOURCES}/vi.lproj/InfoPlist.strings" <<'STRINGS'
 "com.kodau.inputmethod.KodauIM.smart" = "Kodau (Việt Không Dấu + Anh)";
 STRINGS
 
-echo "==> Ad-hoc code signing ${IM_BUNDLE}..."
-codesign --force --deep --sign - "${IM_BUNDLE}"
+echo "==> Code signing ${IM_BUNDLE} (identity: ${SIGN_ARG})..."
+codesign --force --deep --sign "${SIGN_ARG}" "${IM_BUNDLE}"
 
 echo "==> Registering Kodau in macOS Input Sources (TIS)..."
 REG_SRC="${BUILD_DIR}/register_tis.swift"
