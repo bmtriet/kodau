@@ -235,6 +235,19 @@ final class KodauIMController: IMKInputController {
                     self.apply(self.composer.undoCandidatePopup(), client: client)
                 }
             }
+            // "Thêm…" / "Gõ từ khác" chips mirror `⌥6` / `⌥E` for the focused word.
+            popup.onExpand = { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, let client = self.activeClientObject else { return }
+                    self.apply(self.composer.expandFocusedCandidates(), client: client)
+                }
+            }
+            popup.onEditWord = { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, let client = self.activeClientObject else { return }
+                    self.apply(self.composer.editFocusedWord(), client: client)
+                }
+            }
             // The popup hides itself after 5 s or on a click: drop the focused-word highlight again.
             popup.onHide = { [weak self] in
                 MainActor.assumeIsolated {

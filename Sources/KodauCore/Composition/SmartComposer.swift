@@ -87,17 +87,38 @@ public struct CandidatePresentation: Equatable, Sendable {
     public var geminiChanges: [GeminiChange]
     /// Explicit user actions (`⌥←`/`⌥→`, `⌥Space`) show at once; automatic Space popups are debounced.
     public var showsImmediately: Bool
+    /// 1-based page of the expanded (`⌥6`) list; always `1` for the normal ≤5 popup.
+    public var page: Int
+    /// Number of pages the expanded list is split into; `1` for the normal popup.
+    public var pageCount: Int
+    /// True while the popup shows the expanded “Xem thêm” (`⌥6`) list instead of the ≤5 quick candidates.
+    public var isExpanded: Bool
+    /// Non-nil while the user retypes the focused word (`⌥E`): the popup shows this hint instead of candidates.
+    public var editHint: String?
+
+    /// True while the popup must stay on screen regardless of the auto-hide timer (the user is choosing).
+    public var keepsPopupOpen: Bool {
+        isExpanded || editHint != nil
+    }
 
     public init(
         alternative: WordAlternative,
         focusedRange: NSRange,
         geminiChanges: [GeminiChange] = [],
-        showsImmediately: Bool = false
+        showsImmediately: Bool = false,
+        page: Int = 1,
+        pageCount: Int = 1,
+        isExpanded: Bool = false,
+        editHint: String? = nil
     ) {
         self.alternative = alternative
         self.focusedRange = focusedRange
         self.geminiChanges = geminiChanges
         self.showsImmediately = showsImmediately
+        self.page = page
+        self.pageCount = pageCount
+        self.isExpanded = isExpanded
+        self.editHint = editHint
     }
 }
 
@@ -166,8 +187,25 @@ public final class SmartComposer {
     /// Gemini changes still active since the last refinement; `⌥Esc` reverts exactly these while non-empty.
     private var pendingGeminiChanges: [GeminiChange] = []
 
+    /// Expanded (“Xem thêm”, `⌥6`) list for the focused word, split into pages of `expandedPageSize`.
+    private struct ExpandedState {
+        var wordIndex: Int
+        var candidates: [String]
+        /// 0-based page index.
+        var page: Int
+    }
+
+    private var expandedState: ExpandedState?
+
+    /// Inline retype (“Gõ từ khác”, `⌥E`) sub-state: which word is being retyped and the keystrokes so far.
+    private var editWordIndex: Int?
+    private var editBuffer: String = ""
+    /// Displayed clause snapshot taken when the edit started, restored verbatim on cancel.
+    private var editOriginDisplayed: String = ""
+
     private let maxMarkedWords = 12
     private let maxManualMarkedWords = 28
+    static let expandedPageSize = 5
 
     private static let commitPunctuation: Set<Character> = [".", ",", "!", "?", ";", ":"]
 
@@ -184,13 +222,22 @@ public final class SmartComposer {
 
     /// The text currently shown as marked (underlined) composing text.
     public var markedText: String {
-        vniWordBuffer.isEmpty ? displayedClause : vniWordBuffer
+        if let wordIndex = editWordIndex {
+            // While retyping, the marked text previews the clause with the edit buffer in the word's place.
+            return replacingWord(at: wordIndex, with: editBuffer, in: displayedClause)
+        }
+        return vniWordBuffer.isEmpty ? displayedClause : vniWordBuffer
     }
 
     // MARK: - Main Entry Point
 
     /// Processes one key-down event and returns whether the adapter must consume it.
     public func handleKey(_ key: ComposerKey) -> ComposerResult {
+        // The inline retype sub-state (`⌥E`) owns every key until it confirms or cancels.
+        if editWordIndex != nil {
+            return handleEditKey(key)
+        }
+
         let flags = key.modifiers
         let keyCode = key.keyCode
         var pending: [ComposerAction] = []
@@ -229,6 +276,16 @@ public final class SmartComposer {
             // Option + Left/Right: move the popup focus between ambiguous words. Only consumed while a Smart
             // clause with real alternatives is composing; otherwise the arrow keeps its normal cursor meaning.
             if keyCode == 123 || keyCode == 124, let actions = cycleCandidateFocus(forward: keyCode == 124) {
+                return ComposerResult(handled: true, actions: pending + actions)
+            }
+
+            // Option + 6 ("Xem thêm"): expand the focused word's full diacritic list, paged 5 at a time.
+            if keyCode == 22, let actions = toggleExpandedCandidates() {
+                return ComposerResult(handled: true, actions: pending + actions)
+            }
+
+            // Option + E ("Gõ từ khác"): retype just the focused word in place.
+            if keyCode == 14, let actions = beginEditingFocusedWord() {
                 return ComposerResult(handled: true, actions: pending + actions)
             }
 
@@ -417,6 +474,7 @@ public final class SmartComposer {
             rawClause.append(" ")
             clauseVersion &+= 1
             pendingGeminiChanges = []
+            expandedState = nil
             let localRes = runLocalConversionPreservingLocks(raw: rawClause)
             displayedClause = localRes.convertedText
             lastResult = localRes
@@ -514,6 +572,7 @@ public final class SmartComposer {
                     pendingGeminiChanges = []
                     focusedWordIndex = nil
                     synthesizedFocusAlternative = nil
+                    expandedState = nil
 
                     let wordIdx = wordCount(in: rawPrefix)
                     let baseAscii = VNIEngine.stripDiacritics(vniRes.newWord).lowercased()
@@ -539,6 +598,7 @@ public final class SmartComposer {
             clauseVersion &+= 1
             pendingGeminiChanges = []
             synthesizedFocusAlternative = nil
+            expandedState = nil
             rawClause.append(ch)
             displayedClause.append(ch)
             syncLockOfWordStillBeingTyped()
@@ -571,6 +631,7 @@ public final class SmartComposer {
         pendingGeminiChanges = []
         focusedWordIndex = nil
         synthesizedFocusAlternative = nil
+        expandedState = nil
 
         rawClause.removeLast()
         if !displayedClause.isEmpty {
@@ -602,11 +663,23 @@ public final class SmartComposer {
     }
 
     private func applyAlternativeCandidate(index: Int) -> [ComposerAction]? {
-        guard let alt = focusedAlternative ?? realAlternatives(in: lastResult).last,
-              index >= 0, index < alt.candidates.count else {
+        guard let alt = focusedAlternative ?? realAlternatives(in: lastResult).last else {
             return nil
         }
-        let chosen = alt.candidates[index]
+
+        // In the expanded (`⌥6`) list, `⌥1..5` picks from the currently shown page instead of the quick list.
+        let chosen: String
+        if let expanded = expandedState, expanded.wordIndex == alt.wordIndex {
+            let offset = expanded.page * Self.expandedPageSize + index
+            guard index >= 0, index < Self.expandedPageSize, offset < expanded.candidates.count else {
+                return nil
+            }
+            chosen = expanded.candidates[offset]
+        } else {
+            guard index >= 0, index < alt.candidates.count else { return nil }
+            chosen = alt.candidates[index]
+        }
+
         let updated = coordinator.applyUserCorrection(
             rawClause: rawClause,
             currentConverted: displayedClause,
@@ -619,6 +692,7 @@ public final class SmartComposer {
         focusedWordIndex = alt.wordIndex
         pendingGeminiChanges = []
         synthesizedFocusAlternative = nil
+        expandedState = nil
         return [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)]
     }
 
@@ -626,6 +700,16 @@ public final class SmartComposer {
     /// word, including teaching the LearningStore, and hides the popup.
     public func selectCandidate(_ surface: String) -> [ComposerAction] {
         guard let alt = focusedAlternative ?? realAlternatives(in: lastResult).last else { return [] }
+
+        // The expanded list may contain surfaces the quick list does not; resolve the index from whichever
+        // candidate set currently backs the popup and then apply it through the normal path.
+        if let expanded = expandedState, expanded.wordIndex == alt.wordIndex,
+           let offset = expanded.candidates.firstIndex(where: { $0.lowercased() == surface.lowercased() }) {
+            let page = offset / Self.expandedPageSize
+            expandedState?.page = page
+            return applyAlternativeCandidate(index: offset % Self.expandedPageSize) ?? []
+        }
+
         let target = surface.lowercased()
         guard let index = alt.candidates.firstIndex(where: { $0.lowercased() == target }) else { return [] }
         return applyAlternativeCandidate(index: index) ?? []
@@ -685,6 +769,7 @@ public final class SmartComposer {
 
         clauseVersion &+= 1
         pendingGeminiChanges = []
+        expandedState = nil
         let versionSnapshot = clauseVersion
 
         let localRes = runLocalConversionPreservingLocks(raw: rawClause)
@@ -793,6 +878,7 @@ public final class SmartComposer {
         let trailingSpacesCount = request.raw.reversed().prefix(while: { $0 == " " }).count
         let trailingSpaces = String(repeating: " ", count: trailingSpacesCount)
         let previousDisplayed = displayedClause
+        expandedState = nil
         let merged = applyLockedWords(to: result.convertedText) + trailingSpaces
         displayedClause = merged
         lastResult = result
@@ -912,6 +998,11 @@ public final class SmartComposer {
         focusedWordIndex = nil
         synthesizedFocusAlternative = nil
         pendingGeminiChanges = []
+        expandedState = nil
+        // A commit from outside (focus change, click) while retyping a word keeps the original word.
+        editWordIndex = nil
+        editBuffer = ""
+        editOriginDisplayed = ""
         actions.append(.hideCandidates)
         actions.append(.statsChanged)
     }
@@ -955,6 +1046,34 @@ public final class SmartComposer {
         guard config.showCandidateHUD else { return nil }
         let range = utf16Range(ofWordAt: alternative.wordIndex, in: displayedClause)
             ?? NSRange(location: (displayedClause as NSString).length, length: 0)
+
+        // A popup shown for a different word drops any expanded/edit state from the previous one.
+        if let expanded = expandedState, expanded.wordIndex != alternative.wordIndex {
+            expandedState = nil
+        }
+
+        if let expanded = expandedState, expanded.wordIndex == alternative.wordIndex {
+            let pageCount = max(1, (expanded.candidates.count + Self.expandedPageSize - 1) / Self.expandedPageSize)
+            let page = min(max(0, expanded.page), pageCount - 1)
+            let start = page * Self.expandedPageSize
+            let end = min(start + Self.expandedPageSize, expanded.candidates.count)
+            let pageCandidates = start < end ? Array(expanded.candidates[start..<end]) : []
+            return .showCandidates(CandidatePresentation(
+                alternative: WordAlternative(
+                    wordIndex: alternative.wordIndex,
+                    baseWord: alternative.baseWord,
+                    selected: alternative.selected,
+                    candidates: pageCandidates
+                ),
+                focusedRange: range,
+                geminiChanges: geminiChanges,
+                showsImmediately: showsImmediately,
+                page: page + 1,
+                pageCount: pageCount,
+                isExpanded: true
+            ))
+        }
+
         return .showCandidates(CandidatePresentation(
             alternative: alternative,
             focusedRange: range,
@@ -981,6 +1100,7 @@ public final class SmartComposer {
         let alternative = alternatives[nextPosition]
         focusedWordIndex = alternative.wordIndex
         synthesizedFocusAlternative = nil
+        expandedState = nil
         guard let candidate = candidatePresentation(
             for: alternative,
             geminiChanges: pendingGeminiChanges,
@@ -989,6 +1109,260 @@ public final class SmartComposer {
             return []
         }
         return [candidate]
+    }
+
+    // MARK: - Expanded Candidates ("Xem thêm", ⌥6)
+
+    /// Words online in the expanded list: every valid diacritic form of the focused word, its current
+    /// candidates first. Empty when no word is focused or the word has nothing more to offer.
+    private func expandedCandidates(for alternative: WordAlternative) -> [String] {
+        guard !alternative.baseWord.isEmpty else { return [] }
+        let currentSelected = TextSegmenter.wordTokens(from: displayedClause)
+        let rawWord: String
+        if alternative.wordIndex < currentSelected.count {
+            rawWord = currentSelected[alternative.wordIndex]
+        } else {
+            rawWord = alternative.selected
+        }
+        return DiacriticVariants.all(
+            for: alternative.baseWord,
+            rawCasing: rawWord,
+            currentCandidates: alternative.candidates,
+            preferFirstVowel: config.modernTonePlacement
+        )
+    }
+
+    /// `⌥6`: open the expanded list for the focused word, or advance to the next page (wrapping). Returns `nil`
+    /// when no word is focused (or nothing can be expanded), so the adapter does not consume the key.
+    private func toggleExpandedCandidates() -> [ComposerAction]? {
+        guard config.showCandidateHUD, !rawClause.isEmpty else { return nil }
+        guard let alternative = focusedAlternative else { return nil }
+
+        if let expanded = expandedState, expanded.wordIndex == alternative.wordIndex {
+            let pageCount = max(1, (expanded.candidates.count + Self.expandedPageSize - 1) / Self.expandedPageSize)
+            expandedState?.page = (expanded.page + 1) % pageCount
+        } else {
+            let candidates = expandedCandidates(for: alternative)
+            guard candidates.count > 1 else { return nil }
+            expandedState = ExpandedState(wordIndex: alternative.wordIndex, candidates: candidates, page: 0)
+        }
+
+        guard let candidate = candidatePresentation(
+            for: alternative,
+            geminiChanges: pendingGeminiChanges,
+            showsImmediately: true
+        ) else {
+            return []
+        }
+        return [candidate]
+    }
+
+    /// The popup's “Thêm…” chip: same effect as `⌥6`.
+    public func expandFocusedCandidates() -> [ComposerAction] {
+        toggleExpandedCandidates() ?? []
+    }
+
+    // MARK: - Inline Word Retype ("Gõ từ khác", ⌥E)
+
+    /// `⌥E`: start retyping the focused word in place. Returns `nil` when no word is focused (or the clause is
+    /// empty), so the adapter passes the key on.
+    private func beginEditingFocusedWord() -> [ComposerAction]? {
+        guard config.showCandidateHUD, !rawClause.isEmpty, let wordIndex = focusedWordIndex else {
+            return nil
+        }
+        guard wordIndex < wordCount(in: displayedClause) else { return nil }
+        guard let alternative = focusedAlternative ?? alternativeForEditing(at: wordIndex) else { return nil }
+
+        editWordIndex = wordIndex
+        editBuffer = ""
+        editOriginDisplayed = displayedClause
+        expandedState = nil
+        // Discard any in-flight refinement so a late result cannot rewrite the clause under the edit preview.
+        clauseVersion &+= 1
+        var actions: [ComposerAction] = [.cancelRefinement]
+        if let shown = editPresentation(for: alternative, showsImmediately: true) {
+            actions.append(shown)
+        }
+        return actions
+    }
+
+    /// The popup's “Gõ từ khác” chip: same effect as `⌥E`.
+    public func editFocusedWord() -> [ComposerAction] {
+        beginEditingFocusedWord() ?? []
+    }
+
+    private func alternativeForEditing(at wordIndex: Int) -> WordAlternative? {
+        let words = TextSegmenter.wordTokens(from: displayedClause)
+        guard wordIndex < words.count else { return nil }
+        let surface = words[wordIndex]
+        return WordAlternative(
+            wordIndex: wordIndex,
+            baseWord: VNIEngine.stripDiacritics(surface).lowercased(),
+            selected: surface,
+            candidates: [surface]
+        )
+    }
+
+    /// Renders the popup for the inline retype: the hint plus the focused word's range in the preview text.
+    private func editPresentation(for alternative: WordAlternative, showsImmediately: Bool) -> ComposerAction? {
+        guard config.showCandidateHUD, let wordIndex = editWordIndex else { return nil }
+        let previewText = markedText
+        let range = utf16Range(ofWordAt: wordIndex, in: previewText)
+            ?? NSRange(location: (previewText as NSString).length, length: 0)
+        let shown = editBuffer.isEmpty ? alternative.selected : editBuffer
+        return .showCandidates(CandidatePresentation(
+            alternative: WordAlternative(
+                wordIndex: wordIndex,
+                baseWord: alternative.baseWord,
+                selected: shown,
+                candidates: []
+            ),
+            focusedRange: range,
+            geminiChanges: [],
+            showsImmediately: showsImmediately,
+            isExpanded: false,
+            editHint: editHintText(buffer: editBuffer)
+        ))
+    }
+
+    private func editHintText(buffer: String) -> String {
+        if buffer.isEmpty {
+            return "✏️ Gõ lại từ · ↩ xác nhận · Esc huỷ"
+        }
+        return "✏️ Sửa từ: \(buffer) · ↩ xác nhận · Esc huỷ"
+    }
+
+    /// Handles every key while `⌥E` is active. Runs before all other shortcuts so the sub-state is hermetic.
+    private func handleEditKey(_ key: ComposerKey) -> ComposerResult {
+        guard let wordIndex = editWordIndex else { return ComposerResult(handled: false) }
+        let keyCode = key.keyCode
+        let flags = key.modifiers
+
+        // Escape (with or without Option) cancels and restores the clause exactly.
+        if keyCode == 53 {
+            return finishEditing(confirm: false)
+        }
+
+        // Backspace deletes from the edit buffer; on an empty buffer it cancels the edit.
+        if keyCode == 51 {
+            if editBuffer.isEmpty {
+                return finishEditing(confirm: false)
+            }
+            editBuffer.removeLast()
+            return ComposerResult(handled: true, actions: editRefreshActions(wordIndex: wordIndex))
+        }
+
+        // Return / Space confirm the typed word.
+        if keyCode == 36 || keyCode == 76 || keyCode == 49 {
+            return finishEditing(confirm: true)
+        }
+
+        // Any other modified shortcut (⌘/⌃, arrows) cancels the edit and is handled normally afterwards.
+        if flags.contains(.command) || flags.contains(.control)
+            || [123, 124, 125, 126, 115, 116, 117, 119, 121].contains(keyCode) {
+            let cancelled = finishEditing(confirm: false)
+            return ComposerResult(handled: cancelled.handled, actions: cancelled.actions)
+        }
+
+        // Letters and VNI digits feed the edit buffer through the VNI engine (`ba6n5` -> `bận`).
+        guard let chars = key.characters, !chars.isEmpty else {
+            return ComposerResult(handled: true, actions: [])
+        }
+        for ch in chars {
+            if ch.isLetter || ch.isNumber {
+                let res = coordinator.vniEngine.processKey(currentWord: editBuffer, key: ch)
+                editBuffer = res.newWord
+            } else if ch == "'" || ch == "-" || ch == "_" {
+                editBuffer.append(ch)
+            } else {
+                // Other punctuation/symbols cancel: they are almost always meant for the app, not the word.
+                return finishEditing(confirm: false)
+            }
+        }
+        return ComposerResult(handled: true, actions: editRefreshActions(wordIndex: wordIndex))
+    }
+
+    private func editRefreshActions(wordIndex: Int) -> [ComposerAction] {
+        let alternative = alternativeForEditing(at: wordIndex)
+            ?? WordAlternative(wordIndex: wordIndex, baseWord: "", selected: editBuffer, candidates: [])
+        var actions: [ComposerAction] = [.setMarked(markedText)]
+        if let shown = editPresentation(for: alternative, showsImmediately: true) {
+            actions.append(shown)
+        }
+        return actions
+    }
+
+    private func finishEditing(confirm: Bool) -> ComposerResult {
+        guard let wordIndex = editWordIndex else { return ComposerResult(handled: false) }
+
+        let buffer = editBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wasEmpty = buffer.isEmpty
+        let originDisplayed = editOriginDisplayed
+
+        // Leave the sub-state either way, so no branch can keep it alive by accident.
+        editWordIndex = nil
+        editBuffer = ""
+        editOriginDisplayed = ""
+
+        guard confirm, !wasEmpty else {
+            return ComposerResult(handled: true, actions: cancelEditActions(restoring: originDisplayed))
+        }
+
+        // Keep the word count stable: a buffer that splits into several words (or carries punctuation that
+        // `TextSegmenter` folds into a different token, e.g. `ban-xyz`) is rejected.
+        let bufferWords = TextSegmenter.wordTokens(from: buffer)
+        let isSinglePlainWord = buffer.allSatisfy { $0.isLetter || $0.isNumber || $0 == "'" }
+        guard bufferWords.count == 1, isSinglePlainWord else {
+            // Re-enter the edit so the user can fix it instead of silently dropping the word.
+            editWordIndex = wordIndex
+            editBuffer = buffer
+            editOriginDisplayed = originDisplayed
+            var actions: [ComposerAction] = [.setMarked(replacingWord(at: wordIndex, with: buffer, in: originDisplayed))]
+            if let shown = editPresentation(
+                for: alternativeForEditing(at: wordIndex)
+                    ?? WordAlternative(wordIndex: wordIndex, baseWord: "", selected: buffer, candidates: []),
+                showsImmediately: true
+            ) {
+                actions.append(shown)
+            }
+            return ComposerResult(handled: true, actions: actions)
+        }
+
+        let newSurface = bufferWords[0]
+        let newBase = VNIEngine.stripDiacritics(newSurface).lowercased()
+
+        displayedClause = replacingWord(at: wordIndex, with: newSurface, in: displayedClause)
+        rawClause = replacingWord(at: wordIndex, with: newBase, in: rawClause)
+        lockedWords[wordIndex] = newSurface
+        clauseVersion &+= 1
+        geminiRefinedVersion = 0
+        manualConvertedVersion = 0
+        pendingGeminiChanges = []
+        synthesizedFocusAlternative = nil
+        focusedWordIndex = wordIndex
+        expandedState = nil
+
+        // Teach the store with the neighbouring *displayed* words, exactly like a candidate pick.
+        let words = TextSegmenter.wordTokens(from: displayedClause)
+        let prev1 = wordIndex >= 1 && wordIndex - 1 < words.count ? words[wordIndex - 1].lowercased() : nil
+        let prev2 = wordIndex >= 2 && wordIndex - 2 < words.count ? words[wordIndex - 2].lowercased() : nil
+        let next1 = wordIndex + 1 < words.count ? words[wordIndex + 1].lowercased() : nil
+        coordinator.store.recordUserCorrection(
+            baseWord: newBase,
+            chosenSurface: newSurface,
+            prev1: prev1,
+            prev2: prev2,
+            next1: next1
+        )
+
+        var actions: [ComposerAction] = [.cancelRefinement, .setMarked(displayedClause)]
+        actions.append(.hideCandidates)
+        return ComposerResult(handled: true, actions: actions)
+    }
+
+    private func cancelEditActions(restoring origin: String) -> [ComposerAction] {
+        displayedClause = origin
+        return [.setMarked(displayedClause), .hideCandidates]
     }
 
     // MARK: - Gemini Changes
@@ -1060,6 +1434,7 @@ public final class SmartComposer {
         pendingGeminiChanges = []
         focusedWordIndex = nil
         synthesizedFocusAlternative = nil
+        expandedState = nil
         clauseVersion &+= 1
         return [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)]
     }
