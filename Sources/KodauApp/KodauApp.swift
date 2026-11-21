@@ -129,17 +129,23 @@ public final class KodauAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         headerItem.isEnabled = false
         menu.addItem(headerItem)
 
-        let accessTitle = appState.accessibilityGranted
-            ? (appState.isInterceptorRunning ? "✓ Bộ gõ toàn hệ thống: Đang hoạt động" : "✓ Quyền Trợ năng: Đã bật")
-            : "⚠️ Cần cấp Quyền Trợ năng..."
-        let accessItem = NSMenuItem(
-            title: accessTitle,
-            action: appState.accessibilityGranted ? nil : #selector(handleOpenAccessibility),
-            keyEquivalent: ""
-        )
-        accessItem.target = self
-        accessItem.isEnabled = !appState.accessibilityGranted
-        menu.addItem(accessItem)
+        addInputSourceItems(to: menu)
+
+        if appState.config.legacyEventTapEnabled {
+            let accessTitle = appState.accessibilityGranted
+                ? (appState.isInterceptorRunning
+                    ? "✓ Chế độ cũ (CGEventTap): Đang hoạt động"
+                    : "✓ Quyền Trợ năng: Đã bật")
+                : "⚠️ Chế độ cũ cần Quyền Trợ năng..."
+            let accessItem = NSMenuItem(
+                title: accessTitle,
+                action: appState.accessibilityGranted ? nil : #selector(handleOpenAccessibility),
+                keyEquivalent: ""
+            )
+            accessItem.target = self
+            accessItem.isEnabled = !appState.accessibilityGranted
+            menu.addItem(accessItem)
+        }
 
         menu.addItem(.separator())
 
@@ -249,6 +255,52 @@ public final class KodauAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
     }
 
     // MARK: - Menu Bar Actions
+
+    /// KodauIM status line + its one-click fix, replacing the old Accessibility-first header.
+    private func addInputSourceItems(to menu: NSMenu) {
+        switch appState.kodauIMStatus {
+        case .active:
+            let item = NSMenuItem(
+                title: "✓ Bộ gõ Kodau: Đang hoạt động",
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.isEnabled = false
+            menu.addItem(item)
+        case .enabledNotSelected:
+            let selectItem = NSMenuItem(
+                title: "Chọn Kodau ngay",
+                action: #selector(handleSelectKodauIM),
+                keyEquivalent: ""
+            )
+            selectItem.target = self
+            menu.addItem(selectItem)
+        case .installedNotEnabled:
+            let openItem = NSMenuItem(
+                title: "⚠️ Hãy thêm Kodau vào Input Sources...",
+                action: #selector(handleOpenInputSources),
+                keyEquivalent: ""
+            )
+            openItem.target = self
+            menu.addItem(openItem)
+        case .notInstalled:
+            let item = NSMenuItem(
+                title: "⚠️ Chưa cài bộ gõ KodauIM (chạy make install)",
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func handleSelectKodauIM() {
+        appState.selectKodauIM()
+    }
+
+    @objc private func handleOpenInputSources() {
+        appState.openInputSourcesSettings()
+    }
 
     @objc private func handleSelectMode(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,

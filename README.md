@@ -53,8 +53,13 @@ open build/Kodau.app
 
 Checklist chạy thử trên máy thật: [docs/TEST_CHECKLIST.md](docs/TEST_CHECKLIST.md).
 
-## Cấp quyền macOS (để gõ toàn hệ thống)
+## Bật bộ gõ Kodau (đường gõ chính)
 
-1. Lần đầu mở `Kodau.app`, Dialog **Cấu hình Gemini API Key** sẽ tự mở để bạn dán API key và bấm **Kiểm tra kết nối**.
-2. Để Kodau hoạt động trên mọi ứng dụng (Chrome, Slack, VS Code, Notes...), vào **System Settings → Privacy & Security → Accessibility** và bật **Kodau**.
-3. Bạn có thể thử gõ & dạy AI ngay lập tức trong tab **Thử nghiệm & Dạy AI (Playground)** mà chưa cần cấp quyền Accessibility.
+1. `make install` để cài bộ gõ **KodauIM** vào `~/Library/Input Methods`.
+2. **System Settings → Keyboard → Input Sources → Edit… → + → Tiếng Việt → "Kodau (Smart Vi/En)" → Add**.
+3. Chọn Kodau trên menu nguồn nhập liệu (hoặc bấm **"Chọn Kodau ngay"** trên Dashboard).
+   Không cần quyền Trợ năng; macOS tự tắt bộ gõ trong ô mật khẩu.
+4. Lần đầu mở `Kodau.app` (Dashboard), dán Gemini API Key và bấm **Kiểm tra kết nối**.
+
+**Chế độ cũ (tuỳ chọn):** Cài đặt → *Đường gõ* → "Chế độ cũ: chặn phím toàn hệ thống". Chế độ này cần quyền Trợ năng và
+sửa chữ bằng phím Backspace giả lập — chỉ dùng cho app mà bộ gõ không hoạt động tốt.

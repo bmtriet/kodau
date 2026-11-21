@@ -14,6 +14,28 @@ public struct SettingsView: View {
         AppConfig.availableGeminiModels.first ?? "gemini-3.5-flash-lite"
     }
 
+    private var kodauIMStatusTitle: String {
+        switch appState.kodauIMStatus {
+        case .active: return "KodauIM: Đang hoạt động"
+        case .enabledNotSelected: return "KodauIM: Đã bật, chưa được chọn"
+        case .installedNotEnabled: return "KodauIM: Đã cài, chưa thêm vào Input Sources"
+        case .notInstalled: return "KodauIM: Chưa cài"
+        }
+    }
+
+    private var kodauIMStatusCaption: String {
+        switch appState.kodauIMStatus {
+        case .active:
+            return "Bộ gõ Kodau đang là nguồn nhập hiện tại. Không cần quyền Trợ năng và macOS tự tắt bộ gõ trong ô mật khẩu."
+        case .enabledNotSelected:
+            return "KodauIM đã có trong danh sách nguồn nhập. Bấm \"Chọn Kodau ngay\" hoặc dùng tổ hợp chuyển nguồn nhập của macOS để bắt đầu gõ."
+        case .installedNotEnabled:
+            return "Cài đặt Hệ thống → Bàn phím → Nguồn nhập: Sửa… → + → Tiếng Việt → Kodau (Smart Vi/En) → Thêm."
+        case .notInstalled:
+            return "Chạy `make install` trong thư mục dự án để cài KodauIM vào ~/Library/Input Methods."
+        }
+    }
+
     private let quickExcludePresets: [(name: String, bundleID: String)] = [
         ("Terminal", "com.apple.Terminal"),
         ("iTerm2", "com.googlecode.iterm2"),
@@ -278,6 +300,29 @@ public struct SettingsView: View {
 
                         Divider()
 
+                        // Opt-in typo fixing (Gemini). Off = Kodau only ever adds diacritics to the user's words.
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle(
+                                "Sửa lỗi chính tả (Anh / Việt) bằng Gemini",
+                                isOn: Binding(
+                                    get: { appState.config.fixTyposEnabled },
+                                    set: {
+                                        appState.config.fixTyposEnabled = $0
+                                        appState.saveConfig()
+                                    }
+                                )
+                            )
+                            .font(.subheadline.weight(.medium))
+                            Text(appState.config.fixTyposEnabled
+                                 ? "Đang bật: Gemini được sửa từ gõ sai rõ ràng (dnag → đang, teh → the), từng từ một, tối đa 1–2 ký tự. Không mở rộng viết tắt (ko, dc giữ nguyên), không viết lại câu. Chỉ áp dụng cho câu được gửi Gemini."
+                                 : "Đang tắt: Kodau chỉ thêm dấu — mọi chữ cái bạn gõ được giữ nguyên tuyệt đối, kể cả từ gõ sai.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Divider()
+
                         // When to call Gemini (per sentence vs realtime)
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
@@ -478,59 +523,127 @@ public struct SettingsView: View {
                     }
                 }
 
-                // 4. macOS Accessibility & Secure Input Protection
-                settingsCard(title: "Quyền Trợ năng & Bảo mật Mật khẩu macOS", icon: "lock.shield.fill") {
+                // 4. Typing path: KodauIM (default) vs legacy CGEventTap
+                settingsCard(title: "Đường gõ", icon: "keyboard") {
                     VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Image(systemName: appState.kodauIMStatus == .active ? "checkmark.circle.fill" : "circle.dashed")
+                                .foregroundStyle(appState.kodauIMStatus == .active ? .green : .orange)
+                            Text(kodauIMStatusTitle)
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            if appState.kodauIMStatus == .installedNotEnabled {
+                                Button("Mở Input Sources") {
+                                    appState.openInputSourcesSettings()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            } else if appState.kodauIMStatus == .enabledNotSelected {
+                                Button("Chọn Kodau ngay") {
+                                    appState.selectKodauIM()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                            }
+                        }
+
+                        Text(kodauIMStatusCaption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(
+                                "Chế độ cũ: chặn phím toàn hệ thống (cần quyền Trợ năng)",
+                                isOn: Binding(
+                                    get: { appState.config.legacyEventTapEnabled },
+                                    set: {
+                                        appState.config.legacyEventTapEnabled = $0
+                                        appState.saveConfig()
+                                    }
+                                )
+                            )
+                            .font(.subheadline.weight(.medium))
+
+                            Text("Chỉ dùng khi bộ gõ Kodau bị lỗi trong một ứng dụng cụ thể (ví dụ app cũ không nhận diện được nguồn nhập). Chế độ này chặn mọi phím bằng CGEventTap và sửa chữ bằng phím xóa giả lập nên kém ổn định hơn — Kodau khuyến nghị dùng KodauIM.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if appState.config.legacyEventTapEnabled {
                                 HStack(spacing: 8) {
                                     Image(systemName: appState.accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                                         .foregroundStyle(appState.accessibilityGranted ? .green : .orange)
-                                    Text(appState.accessibilityGranted ? "Quyền Trợ năng (Accessibility): Đã cấp phép" : "Cần cấp Quyền Trợ năng để gõ toàn hệ thống")
-                                        .font(.subheadline.weight(.semibold))
+                                    Text(appState.accessibilityGranted
+                                         ? (appState.isInterceptorRunning ? "Chế độ cũ đang hoạt động." : "Đã có quyền Trợ năng.")
+                                         : "Chế độ cũ cần quyền Trợ năng để chặn phím.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    if !appState.accessibilityGranted {
+                                        Button("Cấp quyền Trợ năng") {
+                                            appState.openAccessibilitySettings()
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                    }
                                 }
-                                Text(appState.isInterceptorRunning ? "Bộ gõ toàn hệ thống (CGEventTap) đang hoạt động bình thường." : "Hãy bật Kodau trong Cài đặt Hệ thống → Quyền riêng tư & Bảo mật → Trợ năng.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                .padding(10)
+                                .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
-
-                            Spacer()
-
-                            Button("Mở Cài đặt Quyền Trợ năng") {
-                                appState.openAccessibilitySettings()
-                            }
-                            .buttonStyle(.borderedProminent)
-
-                            Button("Kết nối lại") {
-                                appState.startInterceptorIfPossible()
-                            }
-                            .buttonStyle(.bordered)
                         }
+                    }
+                }
 
-                        // Secure Input Explanation Card
+                // 5. macOS Secure Input Protection
+                settingsCard(title: "Bảo mật Mật khẩu macOS", icon: "lock.shield.fill") {
+                    VStack(alignment: .leading, spacing: 14) {
                         HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: "shield.lefthalf.filled.badge.checkmark")
+                            Image(systemName: "lock.fill")
                                 .font(.title2)
                                 .foregroundStyle(.green)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("macOS Secure Input — Mật khẩu luôn an toàn 100%")
-                                    .font(.subheadline.weight(.bold))
-                                Text("Kodau kiểm tra đồng thời cờ bảo mật cấp hệ điều hành `IsSecureEventInputEnabled()` và thuộc tính `AXSecureTextField` trên từng phím nhấn. Ngay khi bạn chạm vào ô nhập mật khẩu, khóa hệ thống hoặc ứng dụng quản lý mật khẩu (1Password, Bitwarden, Keychain), Kodau lập tức xóa trắng bộ đệm RAM, hiển thị biểu tượng 🔒 trên thanh menu và cho phím đi thẳng qua macOS — tuyệt đối không sửa, không lưu và không gửi ra ngoài.")
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Ở chế độ mặc định, macOS tự tắt KodauIM trong ô mật khẩu")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Bộ gõ KodauIM là nguồn nhập chuẩn của macOS nên hệ thống tự chuyển về bàn phím gốc khi bạn gõ vào ô mật khẩu, khóa hoặc hộp thoại bảo mật — Kodau không thể đọc hay sửa nội dung. Nếu bạn bật chế độ cũ (CGEventTap), Kodau còn kiểm tra thêm `IsSecureEventInputEnabled()` và `AXSecureTextField` trên từng phím nhấn rồi xóa trắng bộ đệm.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
+                            Spacer()
                         }
                         .padding(12)
-                        .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color.green.opacity(0.24), lineWidth: 1)
-                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        if appState.config.legacyEventTapEnabled {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: "shield.lefthalf.filled.badge.checkmark")
+                                    .font(.title2)
+                                    .foregroundStyle(.green)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Chế độ cũ vẫn bảo vệ mật khẩu")
+                                        .font(.subheadline.weight(.bold))
+                                    Text("Khi chặn phím toàn hệ thống, Kodau kiểm tra đồng thời cờ `IsSecureEventInputEnabled()` và thuộc tính `AXSecureTextField` trên từng phím nhấn. Ngay khi bạn chạm vào ô nhập mật khẩu, khóa hệ thống hoặc ứng dụng quản lý mật khẩu (1Password, Bitwarden, Keychain), Kodau xóa trắng bộ đệm RAM, hiện biểu tượng 🔒 trên thanh menu và cho phím đi thẳng qua macOS.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(Color.green.opacity(0.24), lineWidth: 1)
+                            )
+                        }
                     }
                 }
 
-                // 5. Excluded Applications
+                // 6. Excluded Applications
                 settingsCard(title: "Ứng dụng ngoại lệ (Tự động tắt dấu / Pass-through)", icon: "app.badge.checkmark") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
@@ -584,7 +697,7 @@ public struct SettingsView: View {
                     }
                 }
 
-                // 6. Data Management
+                // 7. Data Management
                 settingsCard(title: "Quản lý dữ liệu học cục bộ", icon: "externaldrive.fill") {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {

@@ -39,6 +39,8 @@ public final class AppState: ObservableObject {
     @Published public var config: AppConfig
     @Published public var stats: LearningStats
     @Published public var usageSummaries: [UsageSummary] = []
+    @Published public var kodauIMStatus: KodauIMStatus = .notInstalled
+    @Published public var inputSourceErrorMessage: String? = nil
     @Published public var accessibilityGranted: Bool = false
     @Published public var isInterceptorRunning: Bool = false
     @Published public var isSecureInputActive: Bool = false
@@ -55,6 +57,7 @@ public final class AppState: ObservableObject {
     public let coordinator: SmartCoordinator
     public let interceptor: KeyboardInterceptor
     public let candidatePanel: CandidatePanelController
+    public let inputSourceMonitor: InputSourceMonitor
 
     private var accessibilityPollTimer: Timer?
     private var distributedObserver: NSObjectProtocol?
@@ -96,14 +99,26 @@ public final class AppState: ObservableObject {
         self.interceptor = keyboardInterceptor
         self.candidatePanel = CandidatePanelController()
 
+        let monitor = InputSourceMonitor()
+        self.inputSourceMonitor = monitor
+        self.kodauIMStatus = monitor.status
+
         // Automatically show the Gemini API Key dialog on first launch if no key is configured yet
         self.showAPIKeyDialog = !loadedConfig.hasAPIKey && loadedConfig.brainStrategy != .offlineOnly
 
         wireCallbacks()
         observeExternalConfigChanges()
-        refreshAccessibilityAndStartIfPossible()
+        monitor.onStatusChanged = { [weak self] newStatus in
+            guard let self else { return }
+            self.kodauIMStatus = newStatus
+            if newStatus == .active {
+                self.inputSourceErrorMessage = nil
+            }
+            self.onMenuBarStateChanged?()
+        }
+        monitor.start()
+        syncLegacyTypingPath()
         refreshStats()
-        startAccessibilityPolling()
     }
 
     deinit {
@@ -129,6 +144,7 @@ public final class AppState: ObservableObject {
                     self.config = reloaded
                     self.coordinator.updateConfig(reloaded)
                     self.interceptor.updateConfig(reloaded)
+                    self.syncLegacyTypingPath()
                     self.onMenuBarStateChanged?()
                 }
                 self.refreshStats()
@@ -227,6 +243,7 @@ public final class AppState: ObservableObject {
         if !config.showCandidateHUD {
             candidatePanel.hide()
         }
+        syncLegacyTypingPath()
         updateOfflineReadyBanner()
         onMenuBarStateChanged?()
     }
@@ -271,7 +288,59 @@ public final class AppState: ObservableObject {
         return result
     }
 
-    // MARK: - Accessibility & Interceptor
+    // MARK: - Input Source (KodauIM)
+
+    /// KodauIM is the primary typing path; these forward the monitor's actions to the UI.
+    public func refreshInputSourceStatus() {
+        kodauIMStatus = inputSourceMonitor.refresh()
+    }
+
+    public func openInputSourcesSettings() {
+        inputSourceErrorMessage = nil
+        InputSourceMonitor.openInputSourcesSettings()
+    }
+
+    /// Reports whether macOS accepted the switch (it can refuse while a secure field has focus).
+    @discardableResult
+    public func selectKodauIM() -> Bool {
+        let success = inputSourceMonitor.selectKodauIM()
+        kodauIMStatus = inputSourceMonitor.status
+        if success {
+            inputSourceErrorMessage = nil
+        } else {
+            switch kodauIMStatus {
+            case .active:
+                inputSourceErrorMessage = nil
+            case .installedNotEnabled:
+                inputSourceErrorMessage = "Kodau chưa được thêm vào Input Sources. Mở Input Sources để thêm Kodau (Smart Vi/En)."
+            default:
+                inputSourceErrorMessage = "macOS chưa cho phép chuyển nguồn nhập lúc này (ví dụ khi đang ở ô mật khẩu). Hãy thử lại hoặc chọn Kodau từ menu nguồn nhập trên thanh menu."
+            }
+        }
+        onMenuBarStateChanged?()
+        return success
+    }
+
+    // MARK: - Legacy CGEventTap (optional fallback)
+
+    /// Starts/stops the legacy keyboard tap to match `legacyEventTapEnabled`, and only polls
+    /// Accessibility while that optional mode is on.
+    public func syncLegacyTypingPath() {
+        guard config.legacyEventTapEnabled else {
+            accessibilityPollTimer?.invalidate()
+            accessibilityPollTimer = nil
+            if interceptor.isRunning {
+                interceptor.stop()
+            }
+            isInterceptorRunning = false
+            accessibilityGranted = false
+            onMenuBarStateChanged?()
+            return
+        }
+
+        refreshAccessibilityAndStartIfPossible()
+        startAccessibilityPolling()
+    }
 
     public func openAccessibilitySettings() {
         _ = SecureInputMonitor.isAccessibilityTrusted(prompt: true)
@@ -281,11 +350,18 @@ public final class AppState: ObservableObject {
         refreshAccessibilityAndStartIfPossible()
     }
 
-    public func startInterceptorIfPossible() {
-        refreshAccessibilityAndStartIfPossible()
-    }
-
     private func refreshAccessibilityAndStartIfPossible() {
+        guard config.legacyEventTapEnabled else {
+            // KodauIM path: never touch Accessibility (and never prompt) when legacy mode is off.
+            if interceptor.isRunning {
+                interceptor.stop()
+            }
+            isInterceptorRunning = false
+            accessibilityGranted = false
+            onMenuBarStateChanged?()
+            return
+        }
+
         let trusted = SecureInputMonitor.isAccessibilityTrusted(prompt: false)
         accessibilityGranted = trusted
 
@@ -305,10 +381,10 @@ public final class AppState: ObservableObject {
     }
 
     private func startAccessibilityPolling() {
-        accessibilityPollTimer?.invalidate()
+        guard accessibilityPollTimer == nil else { return }
         accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.config.legacyEventTapEnabled else { return }
                 let trusted = SecureInputMonitor.isAccessibilityTrusted(prompt: false)
                 if trusted != self.accessibilityGranted || (trusted && !self.interceptor.isRunning) {
                     self.refreshAccessibilityAndStartIfPossible()

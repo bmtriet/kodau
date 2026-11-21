@@ -3,7 +3,7 @@ import AppKit
 import KodauCore
 
 /// Interactive Playground & AI Teaching Studio.
-/// Works 100% inside the app window — even before macOS Accessibility permission is granted.
+/// Works 100% inside the app window — no macOS input source or Accessibility permission needed.
 public struct PlaygroundView: View {
     @EnvironmentObject private var appState: AppState
 
@@ -62,7 +62,7 @@ public struct PlaygroundView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Thử nghiệm & Dạy AI")
                     .font(.title2.bold())
-                Text("Gõ tiếng Việt không dấu xen kẽ tiếng Anh (hoặc VNI) ngay tại đây — hoạt động tức thì kể cả khi chưa bật Quyền Trợ năng.")
+                Text("Gõ tiếng Việt không dấu xen kẽ tiếng Anh (hoặc VNI) ngay tại đây — chạy ngay trong cửa sổ ứng dụng, không cần cài nguồn nhập hay cấp quyền Trợ năng.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
