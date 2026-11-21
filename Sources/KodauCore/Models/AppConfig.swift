@@ -66,6 +66,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var dailyGeminiBudgetVND: Double
     /// Minimum seconds between two Gemini API calls (0 = no spacing).
     public var minGeminiIntervalSeconds: Double
+    /// Legacy typing path: Kodau.app intercepts every keystroke with a CGEventTap (needs Accessibility) and edits
+    /// text with synthetic Backspaces. Off by default — the native KodauIM input source is the primary path.
+    public var legacyEventTapEnabled: Bool
 
     public static let availableGeminiModels: [String] = [
         "gemini-3.5-flash-lite",
@@ -100,7 +103,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         sentencePauseMilliseconds: Int = 1500,
         dailyGeminiCallLimit: Int = 500,
         dailyGeminiBudgetVND: Double = 5_000,
-        minGeminiIntervalSeconds: Double = 1.0
+        minGeminiIntervalSeconds: Double = 1.0,
+        legacyEventTapEnabled: Bool = false
     ) {
         self.typingMode = typingMode
         self.brainStrategy = brainStrategy
@@ -122,6 +126,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.dailyGeminiCallLimit = dailyGeminiCallLimit
         self.dailyGeminiBudgetVND = dailyGeminiBudgetVND
         self.minGeminiIntervalSeconds = minGeminiIntervalSeconds
+        self.legacyEventTapEnabled = legacyEventTapEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -147,6 +152,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.dailyGeminiCallLimit = try c.decodeIfPresent(Int.self, forKey: .dailyGeminiCallLimit) ?? defaults.dailyGeminiCallLimit
         self.dailyGeminiBudgetVND = try c.decodeIfPresent(Double.self, forKey: .dailyGeminiBudgetVND) ?? defaults.dailyGeminiBudgetVND
         self.minGeminiIntervalSeconds = try c.decodeIfPresent(Double.self, forKey: .minGeminiIntervalSeconds) ?? defaults.minGeminiIntervalSeconds
+        self.legacyEventTapEnabled = try c.decodeIfPresent(Bool.self, forKey: .legacyEventTapEnabled) ?? defaults.legacyEventTapEnabled
     }
 
     /// Resolves the effective API key (config first, then environment variable `GEMINI_API_KEY`).
