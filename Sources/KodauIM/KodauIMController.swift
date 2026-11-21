@@ -350,6 +350,18 @@ final class KodauIMController: IMKInputController {
 
         menu.addItem(.separator())
 
+        // Opt-in typo fixing (Gemini may fix clear misspellings, word-for-word)
+        let typoItem = NSMenuItem(
+            title: "Sửa lỗi chính tả (Gemini)",
+            action: #selector(toggleFixTypos(_:)),
+            keyEquivalent: ""
+        )
+        typoItem.target = self
+        typoItem.state = config.fixTyposEnabled ? .on : .off
+        menu.addItem(typoItem)
+
+        menu.addItem(.separator())
+
         // Brain strategy items
         for strategy in BrainStrategy.allCases {
             let item = NSMenuItem(
@@ -386,6 +398,10 @@ final class KodauIMController: IMKInputController {
         guard let raw = sender.representedObject as? String,
               let triggerMode = ConversionTriggerMode(rawValue: raw) else { return }
         runtime.updateConfig { $0.triggerMode = triggerMode }
+    }
+
+    @objc private func toggleFixTypos(_ sender: NSMenuItem) {
+        runtime.updateConfig { $0.fixTyposEnabled.toggle() }
     }
 
     @objc private func selectBrainStrategy(_ sender: NSMenuItem) {
