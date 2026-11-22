@@ -1103,4 +1103,21 @@ final class SmartComposerTests {
         #expect((shown?.candidates.count ?? 0) > 1, "got: \(String(describing: shown?.candidates))")
     }
 
+
+    @Test("Manual mode keeps a long message with symbols marked until Option+Space")
+    func manualModeKeepsLongMessageMarked() {
+        var config = AppConfig(brainStrategy: .offlineOnly)
+        config.triggerMode = .manual
+        let composer = makeComposer(config)
+        let message = "Diem khac ban se thay trong Chrome va app Electron: ket qua gemini se hien khi ban go "
+            + "phim ke tiep, ke ca space hay dau cham (hoac dau /) de chot cau"
+        let actions = type(message, into: composer)
+        #expect(commits(in: actions).isEmpty, "nothing may be committed before Option+Space")
+        #expect(composer.markedText == message)
+
+        let converted = composer.handleKey(ComposerKey(keyCode: 49, characters: " ", modifiers: [.option]))
+        #expect(converted.handled)
+        #expect(composer.markedText.hasPrefix("Điểm khác"), "got: \(composer.markedText)")
+    }
+
 }

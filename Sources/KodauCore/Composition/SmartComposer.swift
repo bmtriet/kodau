@@ -222,7 +222,8 @@ public final class SmartComposer {
     private var editOriginDisplayed: String = ""
 
     private let maxMarkedWords = 12
-    private let maxManualMarkedWords = 28
+    /// Manual mode keeps the whole message marked until ⌥Space, so this is only a safety valve for huge pastes.
+    private let maxManualMarkedWords = 150
     static let expandedPageSize = 5
 
     private static let commitPunctuation: Set<Character> = [".", ",", "!", "?", ";", ":"]
@@ -479,6 +480,11 @@ public final class SmartComposer {
 
                 let words = rawClause.split(whereSeparator: { $0.isWhitespace })
                 if words.count >= maxManualMarkedWords {
+                    // Never hand a long manual message to the app without diacritics: convert locally first.
+                    let localRes = runLocalConversionPreservingLocks(raw: rawClause)
+                    displayedClause = localRes.convertedText
+                    lastResult = localRes
+                    manualConvertedVersion = clauseVersion
                     actions += commitAllActions()
                 }
                 return ComposerResult(handled: true, actions: actions)
@@ -652,6 +658,16 @@ public final class SmartComposer {
             displayedClause.append(ch)
             syncLockOfWordStillBeingTyped()
             return ComposerResult(handled: true, actions: [.cancelRefinement, .hideCandidates, .setMarked(displayedClause)])
+        }
+
+        // 5a. Manual mode: quotes, brackets, `/`, `@`… are part of the message the user will convert with ⌥Space;
+        // committing here would hand everything typed so far to the app without diacritics.
+        if cfg.triggerMode == .manual && !rawClause.isEmpty && !ch.isNewline && !ch.isWhitespace {
+            rawClause.append(ch)
+            displayedClause.append(ch)
+            clauseVersion &+= 1
+            pendingGeminiChanges = []
+            return ComposerResult(handled: true, actions: [.setMarked(displayedClause)])
         }
 
         // 5. Any other symbol (e.g., quotes, brackets, operators): commit current clause and let symbol pass through
