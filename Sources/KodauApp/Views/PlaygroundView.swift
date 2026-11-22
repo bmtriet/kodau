@@ -2,28 +2,35 @@ import SwiftUI
 import AppKit
 import KodauCore
 
-/// Interactive Playground & AI Teaching Studio.
-/// Works 100% inside the app window — no macOS input source or Accessibility permission needed.
+/// Home tab: type without diacritics, get the restored Vietnamese back, and teach individual words.
+/// Works entirely inside the app window — no input source or Accessibility permission needed.
 public struct PlaygroundView: View {
     @EnvironmentObject private var appState: AppState
 
-    private enum PlaygroundMode: String, CaseIterable, Identifiable {
-        case smart = "Thông minh (Không dấu + Anh)"
-        case vni = "Gõ VNI thủ công"
-        var id: String { rawValue }
+    private enum PlaygroundMode: CaseIterable, Identifiable {
+        case smart
+        case vni
+
+        var id: Self { self }
+
+        var label: String {
+            switch self {
+            case .smart: return "Thông minh"
+            case .vni: return "VNI"
+            }
+        }
     }
 
-    private struct SampleItem: Identifiable {
+    private struct Sample: Identifiable {
         let id = UUID()
-        let label: String
         let text: String
     }
 
-    private let samples: [SampleItem] = [
-        SampleItem(label: "Công việc + Code", text: "hom nay toi di lam va review code Swift"),
-        SampleItem(label: "Chat Team + Tiếng Anh", text: "meeting luc 3pm nhe, nho gui report cho team"),
-        SampleItem(label: "Tiếng Việt thuần", text: "toi muon xay dung bo go tieng viet khong dau"),
-        SampleItem(label: "Kèm VNI nhanh", text: "ban5 co the gui file design cho minh khong")
+    private let samples: [Sample] = [
+        Sample(text: "hom nay toi di lam va review code Swift"),
+        Sample(text: "meeting luc 3pm nhe, nho gui report cho team"),
+        Sample(text: "toi muon xay dung bo go tieng viet khong dau"),
+        Sample(text: "ban5 co the gui file design cho minh khong")
     ]
 
     @State private var playgroundMode: PlaygroundMode = .smart
@@ -32,7 +39,6 @@ public struct PlaygroundView: View {
     @State private var isConverting: Bool = false
     @State private var useGeminiIfAvailable: Bool = true
 
-    // Word correction popover/panel state
     @State private var selectedWordIndex: Int? = nil
     @State private var customCorrectionInput: String = ""
     @State private var enableVNIInCorrection: Bool = true
@@ -41,147 +47,114 @@ public struct PlaygroundView: View {
     public init() {}
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                headerSection
-                sampleButtonsBar
-                inputCard
-                if let result {
-                    outputCard(result)
-                    interactiveWordCorrectionCard(result)
-                }
-            }
-            .padding(24)
-        }
-    }
-
-    // MARK: - Header
-
-    private var headerSection: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Thử nghiệm & Dạy AI")
-                    .font(.title2.bold())
-                Text("Gõ tiếng Việt không dấu xen kẽ tiếng Anh (hoặc VNI) ngay tại đây — chạy ngay trong cửa sổ ứng dụng, không cần cài nguồn nhập hay cấp quyền Trợ năng.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Picker("Chế độ thử", selection: $playgroundMode) {
-                ForEach(PlaygroundMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 340)
-            .onChange(of: playgroundMode) { _, _ in
-                selectedWordIndex = nil
-                if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    runConversion(allowCloud: false)
-                }
-            }
-        }
-    }
-
-    // MARK: - Quick Samples
-
-    private var sampleButtonsBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Câu mẫu thử nhanh:")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(samples) { sample in
-                        Button {
-                            playgroundMode = .smart
-                            inputText = sample.text
-                            selectedWordIndex = nil
-                            correctionFeedback = nil
-                            runConversion(allowCloud: useGeminiIfAvailable)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "text.bubble")
-                                    .font(.caption)
-                                Text(sample.text)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.primary.opacity(0.06), in: Capsule())
+        PageScaffold("Gõ thử", subtitle: "Gõ không dấu, Kodau thêm dấu ngay trong cửa sổ này.") {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Space.md) {
+                    editorCard
+                    if let result {
+                        resultCard(result)
+                        if let idx = selectedWordIndex, idx < words(of: result.convertedText).count {
+                            correctionPanel(result, wordIndex: idx)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, Space.lg)
             }
         }
     }
 
-    // MARK: - Input Card
+    // MARK: - Editor
 
-    private var inputCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label(
-                    playgroundMode == .smart
-                        ? "Nhập câu không dấu + tiếng Anh"
-                        : "Nhập chuỗi VNI (vd: hom6 nay toi6 d9i lam2)",
-                    systemImage: "keyboard"
-                )
-                .font(.headline)
-
-                Spacer()
-
-                if playgroundMode == .smart {
-                    Toggle("Dùng Gemini nếu cục bộ chưa chắc", isOn: $useGeminiIfAvailable)
-                        .toggleStyle(.checkbox)
-                        .font(.caption)
-                        .disabled(!appState.config.hasAPIKey || appState.config.brainStrategy == .offlineOnly)
+    private var editorCard: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(spacing: Space.sm) {
+                Picker("Chế độ", selection: $playgroundMode) {
+                    ForEach(PlaygroundMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
-            }
-
-            TextEditor(text: $inputText)
-                .font(.system(size: 15))
-                .frame(minHeight: 82, maxHeight: 130)
-                .padding(8)
-                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
-                )
-                .onChange(of: inputText) { oldVal, newVal in
-                    // Trigger fast instant local preview on Space or Return
-                    if newVal.count > oldVal.count, let last = newVal.last, last == " " || last == "\n" {
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 180)
+                .onChange(of: playgroundMode) { _, _ in
+                    selectedWordIndex = nil
+                    if !trimmedInput.isEmpty {
                         runConversion(allowCloud: false)
                     }
                 }
 
-            HStack(spacing: 10) {
+                Spacer(minLength: Space.xs)
+
+                if playgroundMode == .smart {
+                    Toggle("Dùng Gemini khi cần", isOn: $useGeminiIfAvailable)
+                        .toggleStyle(.checkbox)
+                        .font(Typography.caption)
+                        .disabled(!appState.config.hasAPIKey || appState.config.brainStrategy == .offlineOnly)
+                        .help("Chỉ gọi Gemini khi bộ nhớ offline chưa đủ chắc.")
+                }
+            }
+
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $inputText)
+                    .font(.system(size: 15))
+                    .scrollContentBackground(.hidden)
+                    .padding(Space.xs)
+                    .frame(minHeight: 120, maxHeight: 200)
+                    .onChange(of: inputText) { oldVal, newVal in
+                        if newVal.count > oldVal.count, let last = newVal.last, last == " " || last == "\n" {
+                            runConversion(allowCloud: false)
+                        }
+                    }
+
+                if inputText.isEmpty {
+                    Text(playgroundMode == .smart
+                         ? "hom nay toi hop team ve ke hoach moi"
+                         : "hom6 nay toi6 hop5 team ve6 ke61 hoach5")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, Space.sm + 2)
+                        .padding(.vertical, Space.sm + 2)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(
+                Color(nsColor: .textBackgroundColor),
+                in: RoundedRectangle(cornerRadius: Radius.field, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.field, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            )
+
+            HStack(spacing: Space.sm) {
                 Button {
                     runConversion(allowCloud: useGeminiIfAvailable)
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: Space.xxs + 2) {
                         if isConverting {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
                             Image(systemName: "sparkles")
                         }
-                        Text(isConverting ? "Đang phân tích..." : "Chuyển đổi ngay")
+                        Text(isConverting ? "Đang xử lý…" : "Thêm dấu")
                     }
+                    .frame(minWidth: 96)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isConverting || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .controlSize(.large)
+                .disabled(isConverting || trimmedInput.isEmpty)
 
-                Button("Chỉ chạy Offline (<1ms)") {
+                Button("Chỉ chạy offline") {
                     runConversion(allowCloud: false)
                 }
                 .buttonStyle(.bordered)
-                .disabled(isConverting || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .controlSize(.large)
+                .disabled(isConverting || trimmedInput.isEmpty)
+                .help("Không gọi Gemini, dùng bộ nhớ cục bộ (<1ms).")
+
+                Spacer(minLength: Space.xs)
 
                 if !inputText.isEmpty {
                     Button("Xóa") {
@@ -190,164 +163,118 @@ public struct PlaygroundView: View {
                         selectedWordIndex = nil
                         correctionFeedback = nil
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                } else if !appState.config.hasAPIKey && appState.config.brainStrategy != .offlineOnly {
+                    Button("Thêm Gemini API Key") {
+                        appState.selectedTab = .settings
+                    }
+                    .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
                 }
+            }
 
-                Spacer()
+            sampleRow
+        }
+        .kodauCard()
+    }
 
-                if !appState.config.hasAPIKey && appState.config.brainStrategy != .offlineOnly {
+    private var sampleRow: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text("Câu mẫu")
+                .font(Typography.caption)
+                .foregroundStyle(.secondary)
+
+            FlowLayout(spacing: Space.xs) {
+                ForEach(samples) { sample in
                     Button {
-                        appState.showAPIKeyDialog = true
+                        playgroundMode = .smart
+                        inputText = sample.text
+                        selectedWordIndex = nil
+                        correctionFeedback = nil
+                        runConversion(allowCloud: useGeminiIfAvailable)
                     } label: {
-                        Label("Nhập Gemini API Key để học nhanh hơn", systemImage: "key.fill")
-                            .font(.caption)
+                        Text(sample.text)
+                            .font(Typography.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, Space.xs)
+                            .padding(.vertical, 5)
+                            .background(
+                                Color.primary.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: Radius.chip, style: .continuous)
+                            )
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(.plain)
+                    .help("Dùng câu mẫu này")
                 }
             }
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
     }
 
-    // MARK: - Output Card
+    // MARK: - Result
 
-    private func outputCard(_ res: ConversionResult) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Label("Kết quả phục hồi dấu", systemImage: "checkmark.bubble.fill")
-                    .font(.headline)
+    private func resultCard(_ res: ConversionResult) -> some View {
+        let words = words(of: res.convertedText)
+        let changed = changedWordIndices(res)
+        let altMap = Dictionary(uniqueKeysWithValues: res.alternatives.map { ($0.wordIndex, $0) })
 
-                // Engine badge
-                engineBadge(source: res.source, latencyMs: res.latencyMs)
+        return VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(spacing: Space.xs) {
+                Text("Kết quả")
+                    .font(Typography.section)
 
-                Spacer()
+                Text(res.source.label)
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("·")
+                    .font(Typography.caption)
+                    .foregroundStyle(.tertiary)
+
+                Text(latencyLabel(res.latencyMs))
+                    .font(Typography.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+
+                Text("·")
+                    .font(Typography.caption)
+                    .foregroundStyle(.tertiary)
+
+                Text("\(Int((res.confidence * 100).rounded()))% tin cậy")
+                    .font(Typography.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: Space.xs)
+
+                if let feedback = correctionFeedback {
+                    Text(feedback)
+                        .font(Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(res.convertedText, forType: .string)
                 } label: {
                     Label("Sao chép", systemImage: "doc.on.doc")
-                        .font(.caption)
+                        .font(Typography.caption)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
 
-            Text(res.convertedText)
-                .font(.system(size: 18, weight: .medium))
-                .textSelection(.enabled)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.accentColor.opacity(0.20), lineWidth: 1)
-                )
-
-            // Confidence & Language Ratio Meters
-            HStack(spacing: 20) {
-                HStack(spacing: 8) {
-                    Text("Độ tin cậy:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ProgressView(value: res.confidence)
-                        .frame(width: 110)
-                        .tint(res.confidence >= appState.config.localConfidenceThreshold ? .green : .orange)
-                    Text("\(Int((res.confidence * 100).rounded()))%")
-                        .font(.caption.monospaced().weight(.semibold))
-                }
-
-                HStack(spacing: 6) {
-                    Text("Tỉ lệ tiếng Việt:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(Int((res.vietnameseRatio * 100).rounded()))%")
-                        .font(.caption.monospaced().weight(.semibold))
-                }
-
-                HStack(spacing: 6) {
-                    Text("Độ trễ:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(String(format: "%.1f ms", res.latencyMs))
-                        .font(.caption.monospaced().weight(.semibold))
-                }
-
-                Spacer()
-            }
-        }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    @ViewBuilder
-    private func engineBadge(source: ConversionSource, latencyMs: Double) -> some View {
-        let color: Color = {
-            switch source {
-            case .geminiAPI: return .purple
-            case .vniOverride: return .orange
-            case .localEnglish, .passthrough: return .gray
-            default: return .green
-            }
-        }()
-
-        let labelText: String = {
-            if source.isOffline && source != .vniOverride {
-                let speed = latencyMs < 1.0 ? "<1ms" : String(format: "%.0fms", latencyMs)
-                return "\(source.label) (\(speed))"
-            }
-            return source.label
-        }()
-
-        HStack(spacing: 4) {
-            Image(systemName: source == .geminiAPI ? "sparkles" : "cpu")
-                .font(.caption2)
-            Text(labelText)
-                .font(.caption.weight(.semibold))
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background(color.opacity(0.15), in: Capsule())
-        .foregroundStyle(color)
-    }
-
-    // MARK: - Interactive Word Chips & AI Teaching
-
-    private func interactiveWordCorrectionCard(_ res: ConversionResult) -> some View {
-        let words = res.convertedText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        let altMap: [Int: WordAlternative] = Dictionary(
-            uniqueKeysWithValues: res.alternatives.map { ($0.wordIndex, $0) }
-        )
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Nhấp vào bất kỳ từ nào để sửa dấu & dạy Kodau ghi nhớ", systemImage: "hand.tap.fill")
-                    .font(.headline)
-                Spacer()
-                if let feedback = correctionFeedback {
-                    Label(feedback, systemImage: "checkmark.circle.fill")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.green)
-                }
-            }
-
-            // Wrapping word chips
-            FlowChipLayout(spacing: 8) {
+            FlowLayout(spacing: Space.xxs + 2) {
                 ForEach(Array(words.enumerated()), id: \.offset) { idx, word in
-                    let hasAlts = (altMap[idx]?.candidates.count ?? 0) > 1
-                    let isSelected = (selectedWordIndex == idx)
-
-                    Button {
+                    wordChip(
+                        word,
+                        isChanged: changed.contains(idx),
+                        hasAlternatives: (altMap[idx]?.candidates.count ?? 0) > 1,
+                        isSelected: selectedWordIndex == idx
+                    ) {
                         if selectedWordIndex == idx {
                             selectedWordIndex = nil
                         } else {
@@ -355,131 +282,166 @@ public struct PlaygroundView: View {
                             customCorrectionInput = word
                             correctionFeedback = nil
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(word)
-                                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                            if hasAlts {
-                                Circle()
-                                    .fill(isSelected ? Color.white : Color.orange)
-                                    .frame(width: 5, height: 5)
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            isSelected
-                                ? AnyShapeStyle(Color.accentColor)
-                                : AnyShapeStyle(Color.primary.opacity(hasAlts ? 0.10 : 0.05)),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        )
-                        .foregroundStyle(isSelected ? .white : .primary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            // Active word correction panel
-            if let idx = selectedWordIndex, idx < words.count {
-                let currentWord = words[idx]
-                let alt = altMap[idx]
-                let rawWords = res.originalText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-                let rawWord = idx < rawWords.count ? rawWords[idx] : VNIEngine.stripDiacritics(currentWord)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Divider()
-
-                    HStack {
-                        Text("Dạy từ thứ #\(idx + 1):")
-                            .font(.subheadline.weight(.semibold))
-                        Text("\"\(rawWord)\" → \"\(currentWord)\"")
-                            .font(.subheadline.monospaced())
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Đóng") {
-                            selectedWordIndex = nil
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-
-                    // Candidate quick buttons
-                    let quickCandidates = buildQuickCandidates(rawWord: rawWord, currentWord: currentWord, alt: alt)
-                    if !quickCandidates.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                Text("Gợi ý:")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                ForEach(quickCandidates, id: \.self) { cand in
-                                    Button(cand) {
-                                        applyWordCorrection(wordIndex: idx, chosenWord: cand)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
-                            }
-                        }
-                    }
-
-                    // Custom VNI-aware correction text field
-                    HStack(spacing: 10) {
-                        TextField("Nhập từ đúng (hỗ trợ gõ VNI như ba5n -> bạn)...", text: $customCorrectionInput)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: customCorrectionInput) { oldVal, newVal in
-                                guard enableVNIInCorrection, newVal.count == oldVal.count + 1,
-                                      let lastChar = newVal.last, lastChar.isNumber else { return }
-                                let prefix = String(newVal.dropLast())
-                                let vniRes = appState.coordinator.vniEngine.processKey(
-                                    currentWord: prefix,
-                                    key: lastChar
-                                )
-                                if vniRes.didTransform {
-                                    customCorrectionInput = vniRes.newWord
-                                }
-                            }
-                            .onSubmit {
-                                let trimmed = customCorrectionInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !trimmed.isEmpty {
-                                    applyWordCorrection(wordIndex: idx, chosenWord: trimmed)
-                                }
-                            }
-
-                        Toggle("Gõ VNI", isOn: $enableVNIInCorrection)
-                            .toggleStyle(.checkbox)
-                            .font(.caption)
-
-                        Button {
-                            let trimmed = customCorrectionInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !trimmed.isEmpty {
-                                applyWordCorrection(wordIndex: idx, chosenWord: trimmed)
-                            }
-                        } label: {
-                            Label("Dạy Kodau", systemImage: "brain.head.profile")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(customCorrectionInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
-                .padding(.top, 4)
             }
+            .padding(.vertical, Space.xxs)
+
+            Text("Bấm vào một từ để sửa dấu và dạy Kodau ghi nhớ.")
+                .font(Typography.caption)
+                .foregroundStyle(.tertiary)
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .kodauCard()
     }
 
-    // MARK: - Logic
+    private func wordChip(
+        _ word: String,
+        isChanged: Bool,
+        hasAlternatives: Bool,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Text(word)
+                    .font(.system(size: 16, weight: isChanged ? .medium : .regular))
+                if hasAlternatives && !isSelected {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: 4, height: 4)
+                }
+            }
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                chipBackground(isChanged: isChanged, isSelected: isSelected),
+                in: RoundedRectangle(cornerRadius: Radius.chip, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(hasAlternatives ? "Có gợi ý khác cho từ này" : "Sửa dấu cho từ này")
+    }
 
-    private func buildQuickCandidates(
-        rawWord: String,
-        currentWord: String,
-        alt: WordAlternative?
-    ) -> [String] {
+    private func chipBackground(isChanged: Bool, isSelected: Bool) -> AnyShapeStyle {
+        if isSelected { return AnyShapeStyle(Color.accentColor) }
+        if isChanged { return AnyShapeStyle(Color.accentColor.opacity(0.12)) }
+        return AnyShapeStyle(Color.clear)
+    }
+
+    // MARK: - Inline word correction
+
+    private func correctionPanel(_ res: ConversionResult, wordIndex idx: Int) -> some View {
+        let outWords = words(of: res.convertedText)
+        let currentWord = outWords[idx]
+        let alt = res.alternatives.first { $0.wordIndex == idx }
+        let rawWords = words(of: res.originalText)
+        let rawWord = idx < rawWords.count ? rawWords[idx] : VNIEngine.stripDiacritics(currentWord)
+        let quickCandidates = buildQuickCandidates(rawWord: rawWord, currentWord: currentWord, alt: alt)
+
+        return VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(spacing: Space.xs) {
+                Text("Sửa từ “\(currentWord)”")
+                    .font(Typography.section)
+
+                Text("gốc: \(rawWord)")
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: Space.xs)
+
+                Button("Đóng") {
+                    selectedWordIndex = nil
+                }
+                .buttonStyle(.borderless)
+                .font(Typography.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if !quickCandidates.isEmpty {
+                FlowLayout(spacing: Space.xs) {
+                    Text("Gợi ý")
+                        .font(Typography.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(quickCandidates, id: \.self) { candidate in
+                        Button(candidate) {
+                            applyWordCorrection(wordIndex: idx, chosenWord: candidate)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            HStack(spacing: Space.xs) {
+                TextField("Nhập từ đúng (hỗ trợ VNI, vd: ba5n)", text: $customCorrectionInput)
+                    .textFieldStyle(.roundedBorder)
+                    .font(Typography.body)
+                    .onChange(of: customCorrectionInput) { oldVal, newVal in
+                        guard enableVNIInCorrection, newVal.count == oldVal.count + 1,
+                              let lastChar = newVal.last, lastChar.isNumber else { return }
+                        let prefix = String(newVal.dropLast())
+                        let vniRes = appState.coordinator.vniEngine.processKey(
+                            currentWord: prefix,
+                            key: lastChar
+                        )
+                        if vniRes.didTransform {
+                            customCorrectionInput = vniRes.newWord
+                        }
+                    }
+                    .onSubmit {
+                        teachWord(at: idx)
+                    }
+
+                Toggle("VNI", isOn: $enableVNIInCorrection)
+                    .toggleStyle(.checkbox)
+                    .font(Typography.caption)
+
+                Button {
+                    teachWord(at: idx)
+                } label: {
+                    Text("Dạy Kodau")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(customCorrectionInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .kodauCard()
+    }
+
+    // MARK: - Helpers
+
+    private var trimmedInput: String {
+        inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func words(of text: String) -> [String] {
+        text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
+
+    /// Indices whose surface form differs from what the user typed (case-insensitive, ignoring punctuation).
+    private func changedWordIndices(_ res: ConversionResult) -> Set<Int> {
+        let rawWords = words(of: res.originalText)
+        let outWords = words(of: res.convertedText)
+        var indices = Set<Int>()
+        for idx in outWords.indices {
+            guard idx < rawWords.count else {
+                indices.insert(idx)
+                continue
+            }
+            if rawWords[idx].lowercased() != outWords[idx].lowercased() {
+                indices.insert(idx)
+            }
+        }
+        return indices
+    }
+
+    private func latencyLabel(_ ms: Double) -> String {
+        ms < 1.0 ? "<1ms" : String(format: "%.0fms", ms)
+    }
+
+    private func buildQuickCandidates(rawWord: String, currentWord: String, alt: WordAlternative?) -> [String] {
         var list: [String] = []
         if let alt {
             for cand in alt.candidates where !list.contains(cand) {
@@ -492,8 +454,16 @@ public struct PlaygroundView: View {
         return list.filter { $0 != currentWord }
     }
 
+    private func teachWord(at idx: Int) {
+        let trimmed = customCorrectionInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        applyWordCorrection(wordIndex: idx, chosenWord: trimmed)
+    }
+
+    // MARK: - Logic
+
     private func runConversion(allowCloud: Bool) {
-        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = trimmedInput
         guard !trimmed.isEmpty else {
             result = nil
             return
@@ -513,17 +483,16 @@ public struct PlaygroundView: View {
                 }
             }
             let elapsed = Date().timeIntervalSince(start) * 1000.0
-            let convertedSentence = convertedTokens.joined(separator: " ")
             let vniResult = ConversionResult(
                 originalText: trimmed,
-                convertedText: convertedSentence,
+                convertedText: convertedTokens.joined(separator: " "),
                 confidence: 1.0,
                 source: .vniOverride,
                 vietnameseRatio: 1.0,
                 alternatives: [],
                 latencyMs: elapsed
             )
-            self.result = vniResult
+            result = vniResult
             appState.lastConversion = vniResult
             appState.refreshStats()
             return
@@ -532,7 +501,7 @@ public struct PlaygroundView: View {
         // Smart Mode
         if !allowCloud || appState.config.brainStrategy == .offlineOnly || !appState.config.hasAPIKey {
             let local = appState.coordinator.convertSync(trimmed, precedingContext: "")
-            self.result = local
+            result = local
             appState.lastConversion = local
             appState.refreshStats()
             return
@@ -542,8 +511,8 @@ public struct PlaygroundView: View {
         Task {
             let smart = await appState.coordinator.convertSmart(trimmed, precedingContext: "")
             await MainActor.run {
-                self.result = smart
-                self.isConverting = false
+                result = smart
+                isConverting = false
                 appState.lastConversion = smart
                 appState.refreshStats()
             }
@@ -569,53 +538,10 @@ public struct PlaygroundView: View {
             latencyMs: 0.2
         )
 
-        self.result = updatedResult
+        result = updatedResult
         appState.lastConversion = updatedResult
         selectedWordIndex = nil
-        correctionFeedback = "Đã học \"\(chosenWord)\" vào bộ nhớ Offline!"
+        correctionFeedback = "Đã học “\(chosenWord)”"
         appState.refreshStats()
-    }
-}
-
-/// Simple wrapping horizontal flow layout for word chips (macOS 14+ `Layout` protocol).
-private struct FlowChipLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? 600
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth && x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-
-        return CGSize(width: maxWidth, height: y + rowHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var rowHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX && x > bounds.minX {
-                x = bounds.minX
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
     }
 }

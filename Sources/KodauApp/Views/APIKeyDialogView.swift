@@ -36,33 +36,27 @@ public struct APIKeyDialogView: View {
             // Header
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.blue, Color.purple],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 44, height: 44)
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
+                    RoundedRectangle(cornerRadius: Radius.field, style: .continuous)
+                        .fill(Color.accentColor)
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                        )
 
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Kết nối Google Gemini API")
-                            .font(.title2.bold())
-                        Text("Tăng tốc học ngôn ngữ cá nhân trong giai đoạn đầu — tiến tới 100% Offline.")
-                            .font(.subheadline)
+                            .font(Typography.pageTitle)
+                        Text("Gemini giúp học nhanh hơn ở giai đoạn đầu.")
+                            .font(Typography.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                 }
             }
-            .padding(22)
-            .background(Color.primary.opacity(0.03))
+            .padding(Space.md + 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider()
 
@@ -203,26 +197,17 @@ public struct APIKeyDialogView: View {
                         }
                     }
 
-                    // Privacy & Security Guarantee Card
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "lock.shield.fill")
-                            .font(.title3)
-                            .foregroundStyle(.green)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Bảo mật & Quyền riêng tư")
-                                .font(.subheadline.weight(.semibold))
-                            Text("API Key được lưu cục bộ trên máy bạn với quyền bảo vệ `0600`. Kodau tự động ngắt hoàn toàn khi phát hiện ô mật khẩu / macOS Secure Input và mọi câu Gemini xử lý đều được lưu học để bạn sớm chuyển sang 100% Offline.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                    // Privacy note
+                    HStack(alignment: .top, spacing: Space.xs) {
+                        Image(systemName: "lock.shield")
+                            .font(Typography.caption)
+                            .foregroundStyle(.secondary)
+                        Text("API Key lưu cục bộ với quyền 0600. Kodau tự dừng khi gặp ô mật khẩu.")
+                            .font(Typography.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
                     }
-                    .padding(12)
-                    .background(Color.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Color.green.opacity(0.22), lineWidth: 1)
-                    )
                 }
                 .padding(22)
             }
@@ -279,7 +264,8 @@ public struct APIKeyDialogView: View {
                     .foregroundStyle(result.success ? .green : .red)
                 Spacer()
                 Text("Model: \(result.modelUsed) • \(Int(result.latencyMs)) ms")
-                    .font(.caption.monospaced())
+                    .font(Typography.caption)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
 

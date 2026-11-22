@@ -68,7 +68,7 @@ public final class KodauAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
                 backing: .buffered,
                 defer: false
             )
-            window.title = "Kodau — Bộ gõ Tiếng Việt Không Dấu Thông Minh"
+            window.title = "Kodau"
             window.minSize = NSSize(width: 900, height: 600)
             window.contentViewController = hostingController
             window.isReleasedWhenClosed = false

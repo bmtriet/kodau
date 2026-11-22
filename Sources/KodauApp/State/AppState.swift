@@ -4,30 +4,27 @@ import Combine
 import KodauCore
 
 public enum DashboardTab: String, CaseIterable, Identifiable {
-    case roadmap
-    case playground
+    case typing
     case dictionary
-    case usage
+    case stats
     case settings
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
-        case .roadmap: return "Tổng quan & Lộ trình"
-        case .playground: return "Thử nghiệm & Dạy AI"
-        case .dictionary: return "Từ điển & Bộ nhớ"
-        case .usage: return "Token & Chi phí"
+        case .typing: return "Gõ thử"
+        case .dictionary: return "Từ điển"
+        case .stats: return "Thống kê"
         case .settings: return "Cài đặt"
         }
     }
 
     public var iconName: String {
         switch self {
-        case .roadmap: return "chart.line.uptrend.xyaxis"
-        case .playground: return "wand.and.stars"
-        case .dictionary: return "books.vertical"
-        case .usage: return "dollarsign.circle"
+        case .typing: return "keyboard"
+        case .dictionary: return "book.closed"
+        case .stats: return "chart.bar"
         case .settings: return "gearshape"
         }
     }
@@ -49,7 +46,7 @@ public final class AppState: ObservableObject {
     @Published public var showAPIKeyDialog: Bool = false
     @Published public var showOfflineReadyBanner: Bool = false
     @Published public var activeCandidates: WordAlternative? = nil
-    @Published public var selectedTab: DashboardTab = .roadmap
+    @Published public var selectedTab: DashboardTab = .typing
     @Published public var saveErrorMessage: String? = nil
 
     public let store: LearningStore
