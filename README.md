@@ -2,6 +2,20 @@
 
 **Kodau** là ứng dụng bộ gõ macOS giúp bạn gõ **tiếng Việt không dấu** và **tiếng Anh xen kẽ (code-switching)** một cách tự nhiên mà không cần chuyển đổi ngôn ngữ, hỗ trợ **VNI đầy đủ**, bảo vệ tuyệt đối **ô nhập mật khẩu macOS**, và tự học văn phong cá nhân theo lộ trình để đạt **100% Offline không cần gọi API**.
 
+## Video giới thiệu
+
+[![Xem video giới thiệu Kodau](docs/media/kodau-promo-poster.jpg)](docs/media/kodau-promo.mp4)
+
+*Bấm vào ảnh để xem video (46 giây): gõ không dấu → dấu tự hiện, tiếng Anh giữ nguyên, chọn từ khác bằng ⌥1…⌥5, và bảng điều khiển Kodau.*
+
+## Ảnh chụp màn hình
+
+| Gõ thử | Từ điển |
+|---|---|
+| ![Gõ thử](docs/media/screenshots/go-thu.png) | ![Từ điển](docs/media/screenshots/tu-dien.png) |
+| **Thống kê** | **Cài đặt** |
+| ![Thống kê](docs/media/screenshots/thong-ke.png) | ![Cài đặt](docs/media/screenshots/cai-dat.png) |
+
 ## Tính năng nổi bật
 
 1. **Chế độ Thông minh (Smart Mode — Không dấu + Tự nhận diện Anh/Việt)**
