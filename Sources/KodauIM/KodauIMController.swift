@@ -38,6 +38,12 @@ final class KodauIMController: IMKInputController {
     private var flashTimer: Timer?
     private static let flashDuration: TimeInterval = 1.0
 
+    /// Set when an async update (Gemini result, popup click/timer) changed the composer while the client cannot
+    /// take marked-text updates outside a key event; the next keystroke re-renders first.
+    private var needsMarkedRefresh = false
+    /// Bundle ids already classified as Chromium/Electron (true) or native (false).
+    private static var asyncUnsafeCache: [String: Bool] = [:]
+
     /// Weak reference to the latest active client for async marked-text updates.
     private weak var activeClientObject: AnyObject?
 
@@ -119,6 +125,13 @@ final class KodauIMController: IMKInputController {
 
         if handleCorrectionToastHotkey(event) {
             return true
+        }
+
+        // Inside a key event every client accepts marked text safely: show what async work changed meanwhile.
+        if needsMarkedRefresh {
+            needsMarkedRefresh = false
+            let marked = composer.markedText
+            if !marked.isEmpty { setMarked(marked, client: sender) }
         }
 
         beginEditTracking(event: event, client: sender)
@@ -255,7 +268,7 @@ final class KodauIMController: IMKInputController {
             await MainActor.run {
                 guard let clientObj = self.activeClientObject else { return }
                 let actions = self.composer.applyRefinement(result, for: request)
-                self.apply(actions, client: clientObj)
+                self.applyOutsideKeyEvent(actions, client: clientObj)
             }
         }
     }
@@ -276,26 +289,26 @@ final class KodauIMController: IMKInputController {
             popup.onSelectCandidate = { [weak self] surface in
                 MainActor.assumeIsolated {
                     guard let self, let client = self.activeClientObject else { return }
-                    self.apply(self.composer.selectCandidate(surface), client: client)
+                    self.applyOutsideKeyEvent(self.composer.selectCandidate(surface), client: client)
                 }
             }
             popup.onUndo = { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, let client = self.activeClientObject else { return }
-                    self.apply(self.composer.undoCandidatePopup(), client: client)
+                    self.applyOutsideKeyEvent(self.composer.undoCandidatePopup(), client: client)
                 }
             }
             // "Thêm…" / "Gõ từ khác" chips mirror `⌥6` / `⌥E` for the focused word.
             popup.onExpand = { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, let client = self.activeClientObject else { return }
-                    self.apply(self.composer.expandFocusedCandidates(), client: client)
+                    self.applyOutsideKeyEvent(self.composer.expandFocusedCandidates(), client: client)
                 }
             }
             popup.onEditWord = { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, let client = self.activeClientObject else { return }
-                    self.apply(self.composer.editFocusedWord(), client: client)
+                    self.applyOutsideKeyEvent(self.composer.editFocusedWord(), client: client)
                 }
             }
             // The popup hides itself after 5 s or on a click: drop the focused-word highlight again.
@@ -306,7 +319,7 @@ final class KodauIMController: IMKInputController {
                     self.popupHighlightRange = nil
                     self.visiblePresentation = nil
                     guard hadHighlight, let client = self.activeClientObject else { return }
-                    self.setMarked(self.composer.markedText, client: client)
+                    self.refreshMarkedOutsideKeyEvent(client: client)
                 }
             }
         }
@@ -327,17 +340,17 @@ final class KodauIMController: IMKInputController {
                 guard let self else { return }
                 self.pendingCandidateShow = nil
                 guard let client = self.activeClientObject else { return }
-                self.presentCandidatePopup(presentation, client: client)
+                self.presentCandidatePopup(presentation, client: client, inKeyEvent: false)
             }
         }
         pendingCandidateShow = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.candidateShowDelay, execute: work)
     }
 
-    private func presentCandidatePopup(_ presentation: CandidatePresentation, client sender: Any!) {
-        popupHighlightRange = presentation.focusedRange
+    private func presentCandidatePopup(_ presentation: CandidatePresentation, client sender: Any!, inKeyEvent: Bool = true) {
         let marked = composer.markedText
-        if !marked.isEmpty {
+        if !marked.isEmpty, inKeyEvent || !isAsyncUnsafeClient(sender) {
+            popupHighlightRange = presentation.focusedRange
             setMarked(marked, highlight: presentation.focusedRange, client: sender)
         }
         visiblePresentation = presentation
@@ -372,6 +385,63 @@ final class KodauIMController: IMKInputController {
         cancelPendingCandidateShow()
         MainActor.assumeIsolated {
             CandidatePopupController.shared.hide()
+        }
+    }
+
+    // MARK: - Updates Outside a Key Event
+
+    /// Applies composer actions produced by async work (Gemini result, popup click, timers).
+    ///
+    /// Chromium-based clients (Chrome, Edge, Brave, Arc, and every Electron app) treat a `setMarkedText` that
+    /// arrives outside a key event as "commit the current composition, start a new one", which duplicated the
+    /// whole clause several times. For those clients the composer state is still updated, popups still show,
+    /// but marked-text rendering waits for the next keystroke (see `needsMarkedRefresh`).
+    private func applyOutsideKeyEvent(_ actions: [ComposerAction], client sender: Any!) {
+        guard isAsyncUnsafeClient(sender) else {
+            apply(actions, client: sender)
+            return
+        }
+        var deferred: [ComposerAction] = []
+        for action in actions {
+            switch action {
+            case .setMarked, .flashChangedRanges:
+                needsMarkedRefresh = true
+            case .showCandidates(let presentation):
+                presentCandidatePopup(presentation, client: sender, inKeyEvent: false)
+            default:
+                deferred.append(action)
+            }
+        }
+        apply(deferred, client: sender)
+    }
+
+    private func refreshMarkedOutsideKeyEvent(client sender: Any!) {
+        if isAsyncUnsafeClient(sender) {
+            needsMarkedRefresh = true
+        } else {
+            setMarked(composer.markedText, client: sender)
+        }
+    }
+
+    private func isAsyncUnsafeClient(_ sender: Any!) -> Bool {
+        guard let bundleID = (sender as? IMKTextInput)?.bundleIdentifier(), !bundleID.isEmpty else { return true }
+        if let cached = Self.asyncUnsafeCache[bundleID] { return cached }
+        let unsafe = Self.isChromiumBased(bundleID: bundleID)
+        Self.asyncUnsafeCache[bundleID] = unsafe
+        return unsafe
+    }
+
+    private static func isChromiumBased(bundleID: String) -> Bool {
+        let knownBrowsers = [
+            "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser",
+            "com.operasoftware.Opera", "com.vivaldi.Vivaldi", "org.chromium.Chromium"
+        ]
+        if knownBrowsers.contains(where: { bundleID.hasPrefix($0) }) { return true }
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return false }
+        let frameworks = appURL.appendingPathComponent("Contents/Frameworks")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: frameworks.path)) ?? []
+        return names.contains { name in
+            name.hasPrefix("Electron Framework") || name.contains("Chromium") || name.contains("Chrome Framework")
         }
     }
 
@@ -439,6 +509,9 @@ final class KodauIMController: IMKInputController {
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
 
+        // Chromium/Electron commit the composition on an out-of-event update, so there the flash simply ends with
+        // the next keystroke instead of a timer re-render.
+        guard !isAsyncUnsafeClient(sender) else { return }
         flashTimer = Timer.scheduledTimer(withTimeInterval: Self.flashDuration, repeats: false) { [weak self] _ in
             guard let self else { return }
             self.flashTimer = nil
