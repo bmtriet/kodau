@@ -890,7 +890,11 @@ public final class LocalDiacriticEngine: Sendable {
             }
 
             baseCandidates = candidateMap.values
-                .sorted { $0.unigramScore > $1.unigramScore }
+                .sorted {
+                    $0.unigramScore != $1.unigramScore
+                        ? $0.unigramScore > $1.unigramScore
+                        : $0.surface < $1.surface
+                }
                 .prefix(Self.maxCandidatesPerWord)
                 .map { $0 }
 
@@ -953,7 +957,9 @@ public final class LocalDiacriticEngine: Sendable {
                     scoredCandidates.append((cand, stepScore, hadContext, hadVerified))
                 }
 
-                scoredCandidates.sort { $0.stepScore > $1.stepScore }
+                scoredCandidates.sort {
+                    $0.stepScore != $1.stepScore ? $0.stepScore > $1.stepScore : $0.cand.surface < $1.cand.surface
+                }
                 let secondBestScore = scoredCandidates.count > 1 ? scoredCandidates[1].stepScore : (scoredCandidates[0].stepScore - 3.0)
 
                 for (rankIdx, item) in scoredCandidates.enumerated() {
@@ -987,15 +993,24 @@ public final class LocalDiacriticEngine: Sendable {
                 }
             }
 
+            // Equal scores must keep a stable order across processes: the beam is pruned here, so a
+            // dictionary-iteration order would make the offline answer depend on the hash seed.
             nextStates = bestByPair.values
-                .sorted { $0.score > $1.score }
+                .sorted {
+                    if $0.score != $1.score { return $0.score > $1.score }
+                    return $0.path.joined(separator: " ") < $1.path.joined(separator: " ")
+                }
                 .prefix(Self.beamWidth)
                 .map { $0 }
 
             beam = nextStates.isEmpty ? beam : nextStates
         }
 
-        guard let winner = beam.max(by: { $0.score < $1.score }) else {
+        guard let winner = beam.max(by: {
+            $0.score != $1.score
+                ? $0.score < $1.score
+                : $0.path.joined(separator: " ") > $1.path.joined(separator: " ")
+        }) else {
             return DecodeOutput(
                 chosenSurfaces: tokenInfos.map(\.lower),
                 stepDiagnostics: tokenInfos.map { _ in

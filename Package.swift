@@ -38,6 +38,10 @@ let package = Package(
                 .linkedFramework("InputMethodKit")
             ]
         ),
+        .executableTarget(
+            name: "KodauBench",
+            dependencies: ["KodauCore"]
+        ),
         .testTarget(
             name: "KodauCoreTests",
             dependencies: ["KodauCore"]

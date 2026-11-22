@@ -103,6 +103,31 @@ final class KodauIMRuntime {
             fullRawClause: context.isEmpty ? nil : rawClause,
             fullCorrectedClause: context.isEmpty ? nil : correctedClause
         )
+
+        // A post-commit edit is a correction too: log it so the "Lỗi hay gặp" tab and the corpus export see
+        // the mistakes users actually fix after the fact.
+        if config.correctionLogEnabled {
+            let exampleLocal = (context + [candidate.originalSurface.lowercased()]).joined(separator: " ")
+            let event = CorrectionEvent(
+                rawClause: rawClause,
+                context: context.joined(separator: " "),
+                localOutput: exampleLocal,
+                finalOutput: correctedClause,
+                action: .editAfterCommit,
+                baseWord: candidate.baseWord,
+                wrongSurface: candidate.originalSurface,
+                rightSurface: candidate.correctedSurface,
+                source: "edit-after-commit"
+            )
+            KodauLog.learningEvent(
+                "edit-after-commit word=\(candidate.originalSurface)->\(candidate.correctedSurface)",
+                detail: correctedClause,
+                debug: config.debugLogging
+            )
+            DispatchQueue.global(qos: .utility).async { [store] in
+                store.recordCorrectionEvent(event)
+            }
+        }
         notifyStatsChanged()
     }
 

@@ -75,6 +75,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Keep Kodau.app's own menu bar item (KD/VNI/EN) even when KodauIM is set up. Off by default: macOS already
     /// shows the Kodau input source and its menu (modes, Gemini, dashboard), so a second icon is redundant.
     public var alwaysShowMenuBarIcon: Bool
+    /// Keep a local log of every diacritic correction (candidate pick, retype, revert, …) so the "Lỗi hay gặp"
+    /// tab can show the most common mistakes and export a test corpus. Stored only on this machine.
+    public var correctionLogEnabled: Bool
+    /// Log user text as public in `os_log` instead of private. Off by default: typed text stays redacted.
+    public var debugLogging: Bool
 
     public static let availableGeminiModels: [String] = [
         "gemini-3.5-flash-lite",
@@ -112,7 +117,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
         minGeminiIntervalSeconds: Double = 1.0,
         legacyEventTapEnabled: Bool = false,
         fixTyposEnabled: Bool = false,
-        alwaysShowMenuBarIcon: Bool = false
+        alwaysShowMenuBarIcon: Bool = false,
+        correctionLogEnabled: Bool = true,
+        debugLogging: Bool = false
     ) {
         self.typingMode = typingMode
         self.brainStrategy = brainStrategy
@@ -137,6 +144,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.legacyEventTapEnabled = legacyEventTapEnabled
         self.fixTyposEnabled = fixTyposEnabled
         self.alwaysShowMenuBarIcon = alwaysShowMenuBarIcon
+        self.correctionLogEnabled = correctionLogEnabled
+        self.debugLogging = debugLogging
     }
 
     public init(from decoder: Decoder) throws {
@@ -165,6 +174,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.legacyEventTapEnabled = try c.decodeIfPresent(Bool.self, forKey: .legacyEventTapEnabled) ?? defaults.legacyEventTapEnabled
         self.fixTyposEnabled = try c.decodeIfPresent(Bool.self, forKey: .fixTyposEnabled) ?? defaults.fixTyposEnabled
         self.alwaysShowMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .alwaysShowMenuBarIcon) ?? defaults.alwaysShowMenuBarIcon
+        self.correctionLogEnabled = try c.decodeIfPresent(Bool.self, forKey: .correctionLogEnabled) ?? defaults.correctionLogEnabled
+        self.debugLogging = try c.decodeIfPresent(Bool.self, forKey: .debugLogging) ?? defaults.debugLogging
     }
 
     /// Resolves the effective API key (config first, then environment variable `GEMINI_API_KEY`).

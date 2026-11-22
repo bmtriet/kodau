@@ -69,6 +69,20 @@ final class SmartComposerTests {
         return nil
     }
 
+    private func flashRanges(in actions: [ComposerAction]) -> [NSRange] {
+        for action in actions {
+            if case .flashChangedRanges(let ranges) = action { return ranges }
+        }
+        return []
+    }
+
+    private func correctionEvents(in actions: [ComposerAction]) -> [CorrectionEvent] {
+        actions.compactMap { action in
+            guard case .recordCorrection(let event) = action else { return nil }
+            return event
+        }
+    }
+
     /// The last `.showCandidates` in a batch of accumulated actions.
     private func lastPresentation(in actions: [ComposerAction]) -> CandidatePresentation? {
         for action in actions.reversed() {
@@ -487,8 +501,8 @@ final class SmartComposerTests {
 
     // MARK: - Gemini Changes (Part C)
 
-    @Test("A refinement that changes a word reports the change and focuses that word")
-    func refinementReportsGeminiChanges() {
+    @Test("A Gemini change to an unambiguous word flashes it and does not nag with the popup")
+    func refinementFlashesUnambiguousChange() {
         let composer = makeComposer(AppConfig(brainStrategy: .cloudFirst, geminiAPIKey: "test-key"))
         type("hom nay", into: composer)
         let space = composer.handleKey(key(" "))
@@ -499,15 +513,79 @@ final class SmartComposerTests {
         #expect(composer.markedText == "hôm nay ")
 
         let changed = composer.applyRefinement(refinementResult(request.raw, "hôm này"), for: request)
-        guard let shown = presentation(in: changed) else {
-            Issue.record("expected a candidate presentation for the Gemini change")
+
+        // `này` has a single plausible surface, so this is a flash, not a question.
+        #expect(presentation(in: changed) == nil)
+        let flash = flashRanges(in: changed)
+        #expect(flash.count == 1)
+        let marked = composer.markedText as NSString
+        #expect(marked.substring(with: flash[0]) == "này")
+        #expect(composer.markedText == "hôm này ")
+
+        // The change is still rejectable with ⌥Esc, which proves `pendingGeminiChanges` was recorded.
+        let revert = composer.handleKey(ComposerKey(keyCode: 53, characters: "\u{1B}", modifiers: [.option]))
+        #expect(composer.markedText == "hôm nay ")
+        #expect(correctionEvents(in: revert.actions).count == 1)
+    }
+
+    @Test("A Gemini change to a genuinely ambiguous word flashes and still shows the popup")
+    func refinementPopsForAmbiguousChange() {
+        let composer = makeComposer(AppConfig(brainStrategy: .cloudFirst, geminiAPIKey: "test-key"))
+        type("toi ban hang", into: composer)
+        let space = composer.handleKey(key(" "))
+        guard let request = scheduledRequest(in: space.actions) else {
+            Issue.record("expected a scheduled refinement")
             return
         }
 
-        #expect(shown.geminiChanges == [GeminiChange(wordIndex: 1, from: "nay", to: "này")])
-        #expect(shown.alternative.wordIndex == 1)
-        #expect(shown.showsImmediately == true)
-        #expect(composer.markedText == "hôm này ")
+        // The local answer is `tôi bạn hàng`; Gemini rewrites `bạn` -> `bàn`, and that word is ambiguous.
+        #expect(composer.markedText == "tôi bạn hàng ")
+        let result = ConversionResult(
+            originalText: request.raw,
+            convertedText: "tôi bàn hàng",
+            confidence: 0.9,
+            source: .geminiAPI,
+            vietnameseRatio: 1,
+            alternatives: [
+                WordAlternative(
+                    wordIndex: 1,
+                    baseWord: "ban",
+                    selected: "bàn",
+                    candidates: ["bàn", "bạn", "bán"]
+                )
+            ],
+            latencyMs: 1
+        )
+        let changed = composer.applyRefinement(result, for: request)
+
+        let shown = presentation(in: changed)
+        #expect(shown != nil)
+        #expect(shown?.geminiChanges == [GeminiChange(wordIndex: 1, from: "bạn", to: "bàn")])
+        #expect(shown?.showsImmediately == true)
+        let flashed = flashRanges(in: changed)
+        #expect(flashed.count == 1)
+        #expect((composer.markedText as NSString).substring(with: flashed[0]) == "bàn")
+        #expect(composer.markedText == "tôi bàn hàng ")
+    }
+
+    @Test("A refinement requested before more letters were typed is discarded")
+    func staleRefinementAfterTypingIsDiscarded() {
+        let composer = makeComposer(AppConfig(brainStrategy: .cloudFirst, geminiAPIKey: "test-key"))
+        type("hom", into: composer)
+        let first = composer.handleKey(key(" "))
+        guard let request = scheduledRequest(in: first.actions) else {
+            Issue.record("expected a scheduled refinement")
+            return
+        }
+
+        // The user keeps typing into the next word before Gemini answered.
+        _ = type("nay", into: composer)
+        let before = composer.markedText
+
+        let actions = composer.applyRefinement(refinementResult(request.raw, "hôm này"), for: request)
+
+        #expect(actions.isEmpty)
+        #expect(composer.markedText == before)
     }
 
     @Test("Option+Escape after a Gemini change reverts only that word, keeps composing, and locks it")
@@ -864,6 +942,165 @@ final class SmartComposerTests {
         _ = composer.commitAll()
         _ = type("toi di", into: composer)
         #expect(VNIEngine.stripDiacritics(composer.markedText).lowercased() == "toi di", "got: \(composer.markedText)")
+    }
+
+    // MARK: - Correction Log
+
+    @Test("Picking a candidate logs the clause pair and the word it replaced")
+    func candidatePickIsLogged() {
+        let composer = makeComposer()
+        _ = type("ban", into: composer)
+        let space = composer.handleKey(key(" "))
+        guard let shown = presentation(in: space.actions), shown.alternative.candidates.count > 1 else {
+            Issue.record("expected an ambiguous first word with alternatives")
+            return
+        }
+        let before = composer.markedText.trimmingCharacters(in: .whitespaces)
+        let original = shown.alternative.candidates[0]
+        let replacement = shown.alternative.candidates[1]
+
+        // ⌥2 picks the second candidate of the focused word.
+        let applied = composer.handleKey(ComposerKey(keyCode: 19, characters: "2", modifiers: [.option]))
+
+        let events = correctionEvents(in: applied.actions)
+        #expect(events.count == 1)
+        let event = events[0]
+        #expect(event.action == .candidatePick)
+        #expect(event.rawClause == "ban")
+        #expect(event.wordIndex == 0)
+        #expect(event.baseWord == "ban")
+        #expect(event.localOutput == before)
+        #expect(event.finalOutput == composer.markedText.trimmingCharacters(in: .whitespaces))
+        #expect(event.wrongSurface == original)
+        #expect(event.rightSurface == replacement)
+        #expect(event.appBundleID.isEmpty, "the adapter fills the bundle id")
+    }
+
+    @Test("Option+Escape logs a revert_clause event with the raw clause as the final text")
+    func revertClauseIsLogged() {
+        let composer = makeComposer()
+        _ = type("hom nay", into: composer)
+
+        let revert = composer.handleKey(ComposerKey(keyCode: 53, characters: "\u{1B}", modifiers: [.option]))
+
+        let events = correctionEvents(in: revert.actions)
+        #expect(events.count == 1)
+        #expect(events.first?.action == .revertClause)
+        #expect(events.first?.rawClause == "hom nay")
+        #expect(events.first?.finalOutput == "hom nay")
+        #expect(events.first?.localOutput == "hôm nay")
+    }
+
+    @Test("Inline VNI logs the base word that was typed and the surface it became")
+    func inlineVNIIsLogged() {
+        let composer = makeComposer()
+        let typed = type("ban5", into: composer)
+        let events = correctionEvents(in: typed)
+
+        #expect(events.count == 1)
+        #expect(events.first?.action == .inlineVNI)
+        #expect(events.first?.baseWord == "ban")
+        #expect(events.first?.wrongSurface == "ban")
+        #expect(events.first?.rightSurface == "bạn")
+        #expect(events.first?.finalOutput == "bạn")
+    }
+
+    @Test("Option+E logs a retype event for just the retyped word")
+    func retypeIsLogged() {
+        let composer = makeComposer()
+        _ = type("chao ban ", into: composer)
+        let opt = ComposerModifiers.option
+        let before = composer.markedText.trimmingCharacters(in: .whitespaces)
+
+        // The popup already focuses the last word after Space, so ⌥E edits it directly.
+        let began = composer.handleKey(ComposerKey(keyCode: 14, characters: "´", modifiers: opt))
+        #expect(began.handled)
+
+        var typingActions: [ComposerAction] = []
+        for ch in "bn" { typingActions += composer.handleKey(key(ch)).actions }
+        #expect(correctionEvents(in: typingActions).isEmpty, "nothing is logged until the retype is confirmed")
+
+        let confirmed = composer.handleKey(ComposerKey(keyCode: 36, characters: "\r"))
+
+        let events = correctionEvents(in: confirmed.actions)
+        #expect(events.count == 1)
+        let event = events[0]
+        #expect(event.action == .retype)
+        #expect(event.rawClause == "chao ban")
+        #expect(event.localOutput == before)
+        #expect(event.rightSurface == "bn")
+        #expect(event.wrongSurface == "bạn")
+        #expect(event.finalOutput == "chào bn")
+    }
+
+    @Test("Rejecting a Gemini change logs one reject_gemini event per changed word")
+    func rejectGeminiIsLogged() {
+        let composer = makeComposer(AppConfig(brainStrategy: .cloudFirst, geminiAPIKey: "test-key"))
+        _ = type("hom nay", into: composer)
+        let space = composer.handleKey(key(" "))
+        guard let request = scheduledRequest(in: space.actions) else {
+            Issue.record("expected a scheduled refinement")
+            return
+        }
+        _ = composer.applyRefinement(refinementResult(request.raw, "hôm này"), for: request)
+
+        let revert = composer.handleKey(ComposerKey(keyCode: 53, characters: "\u{1B}", modifiers: [.option]))
+
+        let events = correctionEvents(in: revert.actions)
+        #expect(events.count == 1)
+        #expect(events.first?.action == .rejectGemini)
+        #expect(events.first?.wordIndex == 1)
+        #expect(events.first?.wrongSurface == "này")
+        #expect(events.first?.rightSurface == "nay")
+        #expect(events.first?.geminiOutput == "hôm này")
+    }
+
+    @Test("With the correction log disabled no events are emitted")
+    func disabledLogEmitsNothing() {
+        let composer = makeComposer(AppConfig(brainStrategy: .offlineOnly, correctionLogEnabled: false))
+        let typed = type("ban5", into: composer)
+        #expect(correctionEvents(in: typed).isEmpty)
+
+
+        let revertComposer = makeComposer(AppConfig(brainStrategy: .offlineOnly, correctionLogEnabled: false))
+        _ = type("hom nay", into: revertComposer)
+        let revert = revertComposer.handleKey(ComposerKey(keyCode: 53, characters: "\u{1B}", modifiers: [.option]))
+        #expect(correctionEvents(in: revert.actions).isEmpty)
+    }
+
+
+    @Test("Option+Left visits every word of the clause, including words the engine is sure about")
+    func optionLeftVisitsEveryWord() {
+        let composer = makeComposer()
+        let typed = type("Va vo tu cho di het nhung ngay tho ", into: composer)
+        var autoShown: Int?
+        for case .showCandidates(let presentation) in typed { autoShown = presentation.alternative.wordIndex }
+        let words = TextSegmenter.wordTokens(from: composer.markedText)
+        #expect(words.count == 9)
+
+        var visited: [Int] = []
+        for _ in 0..<12 {
+            let result = composer.handleKey(ComposerKey(keyCode: 123, characters: nil, modifiers: [.option]))
+            #expect(result.handled)
+            for case .showCandidates(let presentation) in result.actions {
+                visited.append(presentation.alternative.wordIndex)
+            }
+        }
+        // Walks right-to-left one word at a time from the caret (skipping only the word whose popup Space already
+        // showed) and stops at the first word; nothing in between is skipped.
+        let start = autoShown == 8 ? 7 : 8
+        #expect(Array(visited.prefix(start + 1)) == Array((0...start).reversed()))
+        #expect(visited.last == 0)
+
+        // The focused `cho` (index 3) offers diacritic forms the engine never proposed, and ⌥1..5 applies them.
+        for _ in 0..<3 {
+            _ = composer.handleKey(ComposerKey(keyCode: 124, characters: nil, modifiers: [.option]))
+        }
+        let focus = composer.handleKey(ComposerKey(keyCode: 124, characters: nil, modifiers: [.option]))
+        var shown: WordAlternative?
+        for case .showCandidates(let presentation) in focus.actions { shown = presentation.alternative }
+        #expect(shown?.wordIndex == 4)
+        #expect((shown?.candidates.count ?? 0) > 1, "got: \(String(describing: shown?.candidates))")
     }
 
 }

@@ -7,6 +7,7 @@ public enum DashboardTab: String, CaseIterable, Identifiable {
     case typing
     case dictionary
     case stats
+    case mistakes
     case settings
 
     public var id: String { rawValue }
@@ -16,6 +17,7 @@ public enum DashboardTab: String, CaseIterable, Identifiable {
         case .typing: return "Gõ thử"
         case .dictionary: return "Từ điển"
         case .stats: return "Thống kê"
+        case .mistakes: return "Lỗi hay gặp"
         case .settings: return "Cài đặt"
         }
     }
@@ -25,6 +27,7 @@ public enum DashboardTab: String, CaseIterable, Identifiable {
         case .typing: return "keyboard"
         case .dictionary: return "book.closed"
         case .stats: return "chart.bar"
+        case .mistakes: return "exclamationmark.bubble"
         case .settings: return "gearshape"
         }
     }

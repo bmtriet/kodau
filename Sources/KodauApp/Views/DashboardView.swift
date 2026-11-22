@@ -189,6 +189,8 @@ public struct DashboardView: View {
             DictionaryView()
         case .stats:
             StatsView()
+        case .mistakes:
+            MistakesView()
         case .settings:
             SettingsView()
         }

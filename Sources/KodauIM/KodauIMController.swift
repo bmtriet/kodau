@@ -32,6 +32,12 @@ final class KodauIMController: IMKInputController {
     private var popupHighlightRange: NSRange?
     private static let candidateShowDelay: TimeInterval = 0.3
 
+    /// Ranges currently flashed (words that changed under the user), cleared when the timer fires or a key lands.
+    private var flashRanges: [NSRange] = []
+    /// Falls back to plain marked text after a short highlight.
+    private var flashTimer: Timer?
+    private static let flashDuration: TimeInterval = 1.0
+
     /// Weak reference to the latest active client for async marked-text updates.
     private weak var activeClientObject: AnyObject?
 
@@ -108,6 +114,8 @@ final class KodauIMController: IMKInputController {
 
         // Any key cancels a pending automatic popup: it only appears after a real typing pause.
         cancelPendingCandidateShow()
+        // A new keystroke also ends the "these words changed" flash.
+        clearFlash()
 
         if handleCorrectionToastHotkey(event) {
             return true
@@ -173,12 +181,46 @@ final class KodauIMController: IMKInputController {
 
             case .statsChanged:
                 runtime.notifyStatsChanged()
+
+            case .flashChangedRanges(let ranges):
+                flash(ranges, client: sender)
+
+            case .recordCorrection(let event):
+                recordCorrection(event, client: sender)
             }
+        }
+    }
+
+    /// Writes a correction to the local log off the main thread. The composed event has no bundle id yet, so
+    /// the adapter attaches the client's, and skips the write entirely while macOS reports secure input.
+    private func recordCorrection(_ event: CorrectionEvent, client sender: Any!) {
+        guard runtime.config.correctionLogEnabled else { return }
+        // Secure input (password fields, lock screens): macOS normally swaps Kodau out entirely, but a
+        // non-text-secure field can still report it. There is no cheap, reliable public API for this, so we
+        // rely on `IsSecureEventInputEnabled()` from Carbon, which is exactly what AppKit checks.
+        guard !IsSecureEventInputEnabled() else { return }
+
+        var enriched = event
+        if enriched.appBundleID.isEmpty {
+            enriched.appBundleID = (sender as? IMKTextInput)?.bundleIdentifier() ?? ""
+        }
+        let store = runtime.store
+        let debug = runtime.config.debugLogging
+        KodauLog.learningEvent(
+            "correction action=\(enriched.action.rawValue) word=\(enriched.wrongSurface)->\(enriched.rightSurface)",
+            detail: enriched.rawClause,
+            debug: debug
+        )
+        DispatchQueue.global(qos: .utility).async {
+            store.recordCorrectionEvent(enriched)
         }
     }
 
     private func scheduleRefinement(_ request: RefinementRequest) {
         refinementTask?.cancel()
+        KodauLog.geminiEvent(
+            "refinement scheduled v\(request.version) delay=\(request.delayMs)ms force=\(request.force)"
+        )
 
         let coordinator = runtime.coordinator
         refinementTask = Task {
@@ -187,6 +229,7 @@ final class KodauIMController: IMKInputController {
                 do {
                     try await Task.sleep(nanoseconds: delayNs)
                 } catch {
+                    KodauLog.geminiEvent("refinement cancelled during debounce v\(request.version)")
                     return
                 }
             }
@@ -194,13 +237,20 @@ final class KodauIMController: IMKInputController {
             let trimmedRaw = request.raw.trimmingCharacters(in: .whitespaces)
             guard !trimmedRaw.isEmpty else { return }
 
+            KodauLog.geminiEvent("refinement sent v\(request.version)")
             let result = await coordinator.convertSmart(
                 trimmedRaw,
                 precedingContext: request.context,
                 forceSmartEngine: request.force
             )
+            if let skip = coordinator.lastGeminiSkipReason {
+                KodauLog.geminiEvent("refinement stayed offline v\(request.version) reason=\(skip)")
+            }
             KodauIMRuntime.shared.notifyStatsChanged()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                KodauLog.geminiEvent("refinement cancelled before apply v\(request.version)")
+                return
+            }
 
             await MainActor.run {
                 guard let clientObj = self.activeClientObject else { return }
@@ -345,9 +395,64 @@ final class KodauIMController: IMKInputController {
                 range: highlight
             )
         }
+        let valid = flashRanges.filter { $0.location != NSNotFound && $0.length > 0 && NSMaxRange($0) <= length }
+        for range in valid {
+            attributed.addAttribute(
+                .backgroundColor,
+                value: NSColor.controlAccentColor.withAlphaComponent(0.25),
+                range: range
+            )
+        }
         let selRange = NSRange(location: length, length: 0)
         let repRange = NSRange(location: NSNotFound, length: 0)
         textInput.setMarkedText(attributed, selectionRange: selRange, replacementRange: repRange)
+    }
+
+    /// Highlights the words that changed under the user for ~1 s, then re-sets the marked text without it.
+    /// Only the ranges are painted: the text itself was already set by the preceding `.setMarked`.
+    private func flash(_ ranges: [NSRange], client sender: Any!) {
+        let text = composer.markedText
+        let length = (text as NSString).length
+        let valid = ranges.filter { $0.location != NSNotFound && $0.length > 0 && NSMaxRange($0) <= length }
+        guard !valid.isEmpty, let textInput = sender as? IMKTextInput else { return }
+
+        flashTimer?.invalidate()
+        flashRanges = valid
+
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .underlineColor: NSColor.controlAccentColor.withAlphaComponent(0.75)
+            ]
+        )
+        for range in valid {
+            attributed.addAttribute(
+                .backgroundColor,
+                value: NSColor.controlAccentColor.withAlphaComponent(0.25),
+                range: range
+            )
+        }
+        textInput.setMarkedText(
+            attributed,
+            selectionRange: NSRange(location: length, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        flashTimer = Timer.scheduledTimer(withTimeInterval: Self.flashDuration, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.flashTimer = nil
+            self.flashRanges = []
+            guard let client = self.activeClientObject else { return }
+            self.setMarked(self.composer.markedText, client: client)
+        }
+    }
+
+    private func clearFlash() {
+        guard flashTimer != nil || !flashRanges.isEmpty else { return }
+        flashTimer?.invalidate()
+        flashTimer = nil
+        flashRanges = []
     }
 
     private func clearMarked(client sender: Any!) {

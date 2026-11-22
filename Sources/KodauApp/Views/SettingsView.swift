@@ -408,6 +408,47 @@ public struct SettingsView: View {
             ))
             .help("Hiện thông báo xác nhận ở đáy màn hình, ⌥↩ để học.")
 
+            settingRow(
+                title: "Ghi nhật ký lỗi thêm dấu (chỉ trên máy)",
+                caption: "Xem lại từ hay bị sai và xuất bộ kiểm thử cho `make bench`.",
+                help: "Lưu những lần bạn sửa dấu vào tab Lỗi hay gặp. Chỉ lưu trên máy này."
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { appState.config.correctionLogEnabled },
+                    set: {
+                        appState.config.correctionLogEnabled = $0
+                        appState.saveConfig()
+                    }
+                ))
+                .labelsHidden()
+            }
+
+            settingRow(
+                title: "Log chi tiết để debug",
+                caption: "Mặc định nội dung gõ được ẩn; bật để thấy rõ trong log.",
+                help: "Ghi nội dung bạn gõ ra log hệ thống. Chỉ nên bật khi cần gỡ lỗi."
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { appState.config.debugLogging },
+                    set: {
+                        appState.config.debugLogging = $0
+                        appState.saveConfig()
+                    }
+                ))
+                .labelsHidden()
+            }
+
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                Text("Xem log trong Terminal")
+                    .font(Typography.body)
+                Text(KodauLog.streamCommand)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 2)
+
             Toggle("Học từ vựng khi gõ VNI", isOn: Binding(
                 get: { appState.config.learnFromVNIMode },
                 set: {
@@ -492,6 +533,28 @@ public struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    /// Label + one-line caption on the left, control on the right (matches the rest of the form).
+    private func settingRow<Control: View>(
+        title: String,
+        caption: String,
+        help: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(Typography.body)
+                Text(caption)
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: Space.xs)
+            control()
+        }
+        .help(help)
+    }
 
     private func sliderRow<Content: View>(
         title: String,

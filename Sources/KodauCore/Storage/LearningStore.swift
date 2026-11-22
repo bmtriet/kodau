@@ -172,12 +172,35 @@ public final class LearningStore: @unchecked Sendable {
                 );
                 """)
 
+            // Local-only log of user corrections ("Lỗi hay gặp" tab + corpus export). Never leaves this machine.
+            try execLocked("""
+                CREATE TABLE IF NOT EXISTS correction_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    app_bundle_id TEXT NOT NULL DEFAULT '',
+                    raw_clause TEXT NOT NULL,
+                    context TEXT NOT NULL DEFAULT '',
+                    local_output TEXT NOT NULL DEFAULT '',
+                    gemini_output TEXT,
+                    final_output TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    word_index INTEGER,
+                    base_word TEXT NOT NULL DEFAULT '',
+                    wrong_surface TEXT NOT NULL DEFAULT '',
+                    right_surface TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT '',
+                    confidence REAL
+                );
+                """)
+
             try execLocked("CREATE INDEX IF NOT EXISTS idx_unigrams_base ON unigrams(base_word);")
             try execLocked("CREATE INDEX IF NOT EXISTS idx_bigrams_lookup ON bigrams(prev_surface, base_word);")
             try execLocked("CREATE INDEX IF NOT EXISTS idx_trigrams_lookup ON trigrams(prev2_surface, prev1_surface, base_word);")
             try execLocked("CREATE INDEX IF NOT EXISTS idx_next_bigrams_lookup ON next_bigrams(base_word, next_base);")
             try execLocked("CREATE INDEX IF NOT EXISTS idx_phrases_raw_norm ON phrases(raw_norm);")
             try execLocked("CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage(timestamp);")
+            try execLocked("CREATE INDEX IF NOT EXISTS idx_correction_events_created ON correction_events(created_at);")
+            try execLocked("CREATE INDEX IF NOT EXISTS idx_correction_events_word ON correction_events(base_word, wrong_surface, right_surface);")
         }
     }
 
@@ -400,6 +423,222 @@ public final class LearningStore: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    // MARK: - Correction Log (local only)
+
+    /// Appends one correction to the local log. Ignores events with no usable clause pair.
+    public func recordCorrectionEvent(_ event: CorrectionEvent) {
+        let raw = event.rawClause.trimmingCharacters(in: .whitespacesAndNewlines)
+        let final = event.finalOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, !final.isEmpty else { return }
+
+        let ts = event.createdAt.timeIntervalSince1970
+        let gemini = event.geminiOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        queue.sync {
+            let sql = """
+                INSERT INTO correction_events (
+                    created_at, app_bundle_id, raw_clause, context, local_output, gemini_output, final_output,
+                    action, word_index, base_word, wrong_surface, right_surface, source, confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_double(stmt, 1, ts)
+            bindText(stmt, index: 2, value: event.appBundleID)
+            bindText(stmt, index: 3, value: raw)
+            bindText(stmt, index: 4, value: event.context.trimmingCharacters(in: .whitespacesAndNewlines))
+            bindText(stmt, index: 5, value: event.localOutput.trimmingCharacters(in: .whitespacesAndNewlines))
+            if let gemini, !gemini.isEmpty {
+                bindText(stmt, index: 6, value: gemini)
+            } else {
+                sqlite3_bind_null(stmt, 6)
+            }
+            bindText(stmt, index: 7, value: final)
+            bindText(stmt, index: 8, value: event.action.rawValue)
+            if let wordIndex = event.wordIndex {
+                sqlite3_bind_int64(stmt, 9, Int64(wordIndex))
+            } else {
+                sqlite3_bind_null(stmt, 9)
+            }
+            bindText(stmt, index: 10, value: event.baseWord.lowercased())
+            bindText(stmt, index: 11, value: event.wrongSurface)
+            bindText(stmt, index: 12, value: event.rightSurface)
+            bindText(stmt, index: 13, value: event.source)
+            if let confidence = event.confidence {
+                sqlite3_bind_double(stmt, 14, confidence)
+            } else {
+                sqlite3_bind_null(stmt, 14)
+            }
+            sqlite3_step(stmt)
+        }
+    }
+
+    /// Most repeated word mistakes, grouped by `base_word` + wrong/right surface, newest examples first.
+    public func topCorrectionMistakes(limit: Int = 20) -> [CorrectionMistake] {
+        let safeLimit = max(1, limit)
+        return queue.sync {
+            let sql = """
+                SELECT base_word, wrong_surface, right_surface, COUNT(*) AS hits,
+                       MAX(created_at) AS last_seen, MAX(id) AS newest_id
+                FROM correction_events
+                WHERE base_word != ''
+                GROUP BY base_word, wrong_surface, right_surface
+                ORDER BY hits DESC, last_seen DESC
+                LIMIT ?;
+                """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(safeLimit))
+
+            var rows: [(CorrectionMistake, Int64)] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let newestID = sqlite3_column_int64(stmt, 5)
+                rows.append((
+                    CorrectionMistake(
+                        baseWord: columnText(stmt, index: 0),
+                        wrongSurface: columnText(stmt, index: 1),
+                        rightSurface: columnText(stmt, index: 2),
+                        count: Int(sqlite3_column_int64(stmt, 3)),
+                        lastSeen: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
+                        exampleRawClause: "",
+                        exampleContext: ""
+                    ),
+                    newestID
+                ))
+            }
+
+            // The example clause lives on the newest row of each group; fetch them in one prepared statement.
+            let exampleSQL = "SELECT raw_clause, context FROM correction_events WHERE id = ? LIMIT 1;"
+            var exampleStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, exampleSQL, -1, &exampleStmt, nil) == SQLITE_OK else {
+                return rows.map(\.0)
+            }
+            defer { sqlite3_finalize(exampleStmt) }
+
+            return rows.map { mistake, newestID in
+                sqlite3_reset(exampleStmt)
+                sqlite3_bind_int64(exampleStmt, 1, newestID)
+                guard sqlite3_step(exampleStmt) == SQLITE_ROW else { return mistake }
+                return CorrectionMistake(
+                    baseWord: mistake.baseWord,
+                    wrongSurface: mistake.wrongSurface,
+                    rightSurface: mistake.rightSurface,
+                    count: mistake.count,
+                    lastSeen: mistake.lastSeen,
+                    exampleRawClause: columnText(exampleStmt, index: 0),
+                    exampleContext: columnText(exampleStmt, index: 1)
+                )
+            }
+        }
+    }
+
+    /// Most recent corrections, newest first.
+    public func recentCorrectionEvents(limit: Int = 50) -> [CorrectionEvent] {
+        let safeLimit = max(1, limit)
+        return queue.sync {
+            let sql = """
+                SELECT id, created_at, app_bundle_id, raw_clause, context, local_output, gemini_output,
+                       final_output, action, word_index, base_word, wrong_surface, right_surface, source, confidence
+                FROM correction_events
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?;
+                """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(safeLimit))
+
+            var events: [CorrectionEvent] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                events.append(correctionEvent(from: stmt))
+            }
+            return events
+        }
+    }
+
+    /// Deletes every correction event (the learned dictionary is left untouched).
+    public func clearCorrectionEvents() {
+        queue.sync {
+            _ = try? execLocked("DELETE FROM correction_events;")
+        }
+    }
+
+    /// Exports the correction log as a Part-2 corpus: one line per distinct clause, exactly
+    /// `{"raw": <typed ASCII>, "expected": <what the user finally kept>, "context": <preceding words>}`.
+    ///
+    /// Events whose final word count differs from the raw word count are skipped: a corpus line must stay
+    /// word-for-word comparable, and reworded clauses would teach the benchmark a wrong expectation.
+    public func exportCorrectionCorpusJSONL() -> String {
+        queue.sync {
+            let sql = """
+                SELECT raw_clause, final_output, context
+                FROM correction_events
+                ORDER BY created_at ASC, id ASC;
+                """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return "" }
+            defer { sqlite3_finalize(stmt) }
+
+            var lines: [String] = []
+            var seen = Set<String>()
+
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let raw = columnText(stmt, index: 0).trimmingCharacters(in: .whitespacesAndNewlines)
+                let expected = columnText(stmt, index: 1).trimmingCharacters(in: .whitespacesAndNewlines)
+                let context = columnText(stmt, index: 2).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !raw.isEmpty, !expected.isEmpty else { continue }
+                guard TextSegmenter.wordTokens(from: raw).count == TextSegmenter.wordTokens(from: expected).count else {
+                    continue
+                }
+                guard seen.insert(raw.lowercased()).inserted else { continue }
+
+                let payload: [String: String] = [
+                    "raw": raw,
+                    "expected": expected,
+                    "context": context
+                ]
+                guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+                      let json = String(data: data, encoding: .utf8) else {
+                    continue
+                }
+                lines.append(json)
+            }
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    private func correctionEvent(from stmt: OpaquePointer?) -> CorrectionEvent {
+        let gemini: String? = sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : columnText(stmt, index: 6)
+        let wordIndex: Int? = sqlite3_column_type(stmt, 9) == SQLITE_NULL
+            ? nil
+            : Int(sqlite3_column_int64(stmt, 9))
+        let confidence: Double? = sqlite3_column_type(stmt, 14) == SQLITE_NULL
+            ? nil
+            : sqlite3_column_double(stmt, 14)
+        let action = CorrectionAction(rawValue: columnText(stmt, index: 8)) ?? .candidatePick
+
+        return CorrectionEvent(
+            id: sqlite3_column_int64(stmt, 0),
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
+            appBundleID: columnText(stmt, index: 2),
+            rawClause: columnText(stmt, index: 3),
+            context: columnText(stmt, index: 4),
+            localOutput: columnText(stmt, index: 5),
+            geminiOutput: gemini,
+            finalOutput: columnText(stmt, index: 7),
+            action: action,
+            wordIndex: wordIndex,
+            baseWord: columnText(stmt, index: 10),
+            wrongSurface: columnText(stmt, index: 11),
+            rightSurface: columnText(stmt, index: 12),
+            source: columnText(stmt, index: 13),
+            confidence: confidence
+        )
     }
 
     // MARK: - Lookup APIs

@@ -1,0 +1,243 @@
+{"raw":"toi dang o nha","expected":"tôi đang ở nhà"}
+{"raw":"ban co ranh khong","expected":"bạn có rảnh không"}
+{"raw":"mai minh di hoc nhe","expected":"mai mình đi học nhé"}
+{"raw":"hom nay troi dep qua","expected":"hôm nay trời đẹp quá"}
+{"raw":"toi vua an com xong","expected":"tôi vừa ăn cơm xong"}
+{"raw":"ban dang lam gi do","expected":"bạn đang làm gì đó"}
+{"raw":"co gi moi khong","expected":"có gì mới không"}
+{"raw":"toi se goi lai sau","expected":"tôi sẽ gọi lại sau"}
+{"raw":"cam on ban rat nhieu","expected":"cảm ơn bạn rất nhiều"}
+{"raw":"khong co gi dau","expected":"không có gì đâu"}
+{"raw":"toi khong biet lam the nao","expected":"tôi không biết làm thế nào"}
+{"raw":"chung ta gap nhau luc may gio","expected":"chúng ta gặp nhau lúc mấy giờ"}
+{"raw":"toi dang cho xe buyt","expected":"tôi đang chờ xe buýt"}
+{"raw":"nha toi gan cho","expected":"nhà tôi gần chợ"}
+{"raw":"ban an com chua","expected":"bạn ăn cơm chưa"}
+{"raw":"toi thich doc sach vao buoi toi","expected":"tôi thích đọc sách vào buổi tối"}
+{"raw":"hom qua toi di xem phim","expected":"hôm qua tôi đi xem phim"}
+{"raw":"bo phim do rat hay","expected":"bộ phim đó rất hay"}
+{"raw":"toi muon mua mot chiec ao moi","expected":"tôi muốn mua một chiếc áo mới"}
+{"raw":"cua hang nay mo cua luc 8 gio","expected":"cửa hàng này mở cửa lúc 8 giờ"}
+{"raw":"gia cua no la bao nhieu","expected":"giá của nó là bao nhiêu"}
+{"raw":"toi nghi la no dung","expected":"tôi nghĩ là nó đúng"}
+{"raw":"ban noi chuyen rat vui","expected":"bạn nói chuyện rất vui"}
+{"raw":"toi can nghi ngoi mot chut","expected":"tôi cần nghỉ ngơi một chút"}
+{"raw":"chung toi da den noi an toan","expected":"chúng tôi đã đến nơi an toàn"}
+{"raw":"troi bat dau mua to","expected":"trời bắt đầu mưa to"}
+{"raw":"nho mang theo ao mua","expected":"nhớ mang theo áo mưa"}
+{"raw":"toi quen mat khau roi","expected":"tôi quên mất khẩu rồi"}
+{"raw":"ban thu lai mot lan nua","expected":"bạn thử lại một lần nữa"}
+{"raw":"may tinh cua toi bi treo","expected":"máy tính của tôi bị treo"}
+{"raw":"toi vua cai lai he dieu hanh","expected":"tôi vừa cài lại hệ điều hành"}
+{"raw":"du lieu da duoc luu","expected":"dữ liệu đã được lưu"}
+{"raw":"ban co the gui lai file khong","expected":"bạn có thể gửi lại file không"}
+{"raw":"toi se kiem tra lai sau","expected":"tôi sẽ kiểm tra lại sau"}
+{"raw":"cuoc hop bat dau luc 9 gio sang","expected":"cuộc họp bắt đầu lúc 9 giờ sáng"}
+{"raw":"moi nguoi da den du chua","expected":"mọi người đã đến đủ chưa"}
+{"raw":"toi dang viet bao cao thang nay","expected":"tôi đang viết báo cáo tháng này"}
+{"raw":"de nghi ban doc ky truoc khi ky","expected":"đề nghị bạn đọc kỹ trước khi ký"}
+{"raw":"hop dong nay co hieu luc ba nam","expected":"hợp đồng này có hiệu lực ba năm"}
+{"raw":"khach hang yeu cau hoan tien","expected":"khách hàng yêu cầu hoàn tiền"}
+{"raw":"toi da chuyen khoan thanh toan","expected":"tôi đã chuyển khoản thanh toán"}
+{"raw":"hay kiem tra lai so luong","expected":"hãy kiểm tra lại số lượng"}
+{"raw":"don hang se giao vao ngay mai","expected":"đơn hàng sẽ giao vào ngày mai"}
+{"raw":"thoi gian giao hang la hai ngay","expected":"thời gian giao hàng là hai ngày"}
+{"raw":"cam on anh da ho tro","expected":"cảm ơn anh đã hỗ trợ"}
+{"raw":"toi can them thong tin chi tiet","expected":"tôi cần thêm thông tin chi tiết"}
+{"raw":"vui long xac nhan qua email","expected":"vui lòng xác nhận qua email"}
+{"raw":"noi dung nay chua ro rang","expected":"nội dung này chưa rõ ràng"}
+{"raw":"chung ta can thong nhat lai ke hoach","expected":"chúng ta cần thống nhất lại kế hoạch"}
+{"raw":"toi se cap nhat tai lieu ngay","expected":"tôi sẽ cập nhật tài liệu ngay"}
+{"raw":"ban xem giup toi phan nay","expected":"bạn xem giúp tôi phần này"}
+{"raw":"ket qua kiem tra rat tot","expected":"kết quả kiểm tra rất tốt"}
+{"raw":"loi nay da duoc sua xong","expected":"lỗi này đã được sửa xong"}
+{"raw":"hom nay toi co meeting voi team","expected":"hôm nay tôi có meeting với team"}
+{"raw":"ban review giup minh cai PR nay","expected":"bạn review giúp mình cái PR này"}
+{"raw":"minh can fix bug truoc khi deploy","expected":"mình cần fix bug trước khi deploy"}
+{"raw":"ban da test tren staging chua","expected":"bạn đã test trên staging chưa"}
+{"raw":"server bi loi 500 roi","expected":"server bị lỗi 500 rồi"}
+{"raw":"toi se merge nhanh nay sau khi review","expected":"tôi sẽ merge nhánh này sau khi review"}
+{"raw":"em da gui pull request cho anh","expected":"em đã gửi pull request cho anh"}
+{"raw":"can them mot buoi training cho team","expected":"cần thêm một buổi training cho team"}
+{"raw":"deadline cua task nay la thu sau","expected":"deadline của task này là thứ sáu"}
+{"raw":"toi dang debug cai function nay","expected":"tôi đang debug cái function này"}
+{"raw":"code nay can viet them unit test","expected":"code này cần viết thêm unit test"}
+{"raw":"may hom nay internet rat cham","expected":"mấy hôm nay internet rất chậm"}
+{"raw":"ban nho backup du lieu truoc nhe","expected":"bạn nhớ backup dữ liệu trước nhé"}
+{"raw":"toi vua update len version moi","expected":"tôi vừa update lên version mới"}
+{"raw":"pipeline bi fail o buoc build","expected":"pipeline bị fail ở bước build"}
+{"raw":"can them nguoi review phan backend","expected":"cần thêm người review phần backend"}
+{"raw":"frontend da xong con backend thi chua","expected":"frontend đã xong còn backend thì chưa"}
+{"raw":"minh hop luc 3 gio chieu nhe","expected":"mình họp lúc 3 giờ chiều nhé"}
+{"raw":"anh ay dang lam remote tu Da Nang","expected":"anh ấy đang làm remote từ Đà Nẵng"}
+{"raw":"toi thich lam viec buoi sang hon","expected":"tôi thích làm việc buổi sáng hơn"}
+{"raw":"ban gui lai link duoc khong","expected":"bạn gửi lại link được không"}
+{"raw":"file nay hoi nang nen tai hoi lau","expected":"file này hơi nặng nên tải hơi lâu"}
+{"raw":"toi da cai extension nay roi","expected":"tôi đã cài extension này rồi"}
+{"raw":"ban dung quen commit truoc khi push","expected":"bạn đừng quên commit trước khi push"}
+{"raw":"minh vua lam xong phan login","expected":"mình vừa làm xong phần login"}
+{"raw":"con mot bug nho trong phan logout","expected":"còn một bug nhỏ trong phần logout"}
+{"raw":"OK minh hieu roi","expected":"OK mình hiểu rồi"}
+{"raw":"sounds good ban thu di","expected":"sounds good bạn thử đi"}
+{"raw":"team minh dang dung Slack de trao doi","expected":"team mình đang dùng Slack để trao đổi"}
+{"raw":"toi se gui update vao chieu nay","expected":"tôi sẽ gửi update vào chiều nay"}
+{"raw":"ban check lai mail giup minh","expected":"bạn check lại mail giúp mình"}
+{"raw":"cuoc hop keo dai hon du kien","expected":"cuộc họp kéo dài hơn dự kiến"}
+{"raw":"moi nguoi nho tat camera khi khong noi","expected":"mọi người nhớ tắt camera khi không nói"}
+{"raw":"minh bi mat ket noi mang roi","expected":"mình bị mất kết nối mạng rồi"}
+{"raw":"ban thu restart lai may xem","expected":"bạn thử restart lại máy xem"}
+{"raw":"toi vua nhan duoc thong bao tu he thong","expected":"tôi vừa nhận được thông báo từ hệ thống"}
+{"raw":"ban co the huong dan minh lam khong","expected":"bạn có thể hướng dẫn mình làm không"}
+{"raw":"cai nay can quyen admin moi lam duoc","expected":"cái này cần quyền admin mới làm được"}
+{"raw":"toi da dat lich hop voi khach","expected":"tôi đã đặt lịch họp với khách"}
+{"raw":"khach muon doi ngay giao hang","expected":"khách muốn đổi ngày giao hàng"}
+{"raw":"can xac nhan lai don gia","expected":"cần xác nhận lại đơn giá"}
+{"raw":"hop dong can bo sung dieu khoan moi","expected":"hợp đồng cần bổ sung điều khoản mới"}
+{"raw":"anh ay phu trach khu vuc mien Nam","expected":"anh ấy phụ trách khu vực miền Nam"}
+{"raw":"toi se bao cao ket qua vao thu hai","expected":"tôi sẽ báo cáo kết quả vào thứ hai"}
+{"raw":"ban nho luu y den han chot","expected":"bạn nhớ lưu ý đến hạn chót"}
+{"raw":"chung ta can chuan bi them tai lieu","expected":"chúng ta cần chuẩn bị thêm tài liệu"}
+{"raw":"toi ban hang online","expected":"tôi bán hàng online"}
+{"raw":"chao ban toi ten la Nam","expected":"chào bạn tôi tên là Nam"}
+{"raw":"cai ban nay dat qua","expected":"cái bàn này đắt quá"}
+{"raw":"ma cua toi bi hong","expected":"má của tôi bị hỏng"}
+{"raw":"ma nay la ma gi","expected":"mã này là mã gì"}
+{"raw":"toi di lam luc 7 gio","expected":"tôi đi làm lúc 7 giờ"}
+{"raw":"toi nay toi se di hoc","expected":"tối nay tôi sẽ đi học"}
+{"raw":"toi dang ban viec","expected":"tôi đang bận việc"}
+{"raw":"co ay la giao vien","expected":"cô ấy là giáo viên"}
+{"raw":"cac ban nho mang sach","expected":"các bạn nhớ mang sách"}
+{"raw":"toi hoc tieng Anh moi ngay","expected":"tôi học tiếng Anh mỗi ngày"}
+{"raw":"viec nay rat quan trong","expected":"việc này rất quan trọng"}
+{"raw":"sang nay toi day som","expected":"sáng nay tôi dậy sớm"}
+{"raw":"toi sang ben kia duong","expected":"tôi sang bên kia đường"}
+{"raw":"co mot cai ma ban thich","expected":"có một cái mà bạn thích"}
+{"raw":"me toi di cho moi sang","expected":"mẹ tôi đi chợ mỗi sáng"}
+{"raw":"toi co hai nguoi ban than","expected":"tôi có hai người bạn thân"}
+{"raw":"toi khong co tien","expected":"tôi không có tiền"}
+{"raw":"ba ngoai toi nam nay 80 tuoi","expected":"bà ngoại tôi năm nay 80 tuổi"}
+{"raw":"toi khong biet ma do la gi","expected":"tôi không biết mã đó là gì"}
+{"raw":"co giao cho chung toi bai tap","expected":"cô giáo cho chúng tôi bài tập"}
+{"raw":"ban co the giup toi khong","expected":"bạn có thể giúp tôi không"}
+{"raw":"chung ta ban ve ke hoach moi","expected":"chúng ta bàn về kế hoạch mới"}
+{"raw":"toi di hoc bang xe dap","expected":"tôi đi học bằng xe đạp"}
+{"raw":"hoc phi nam nay tang","expected":"học phí năm nay tăng"}
+{"raw":"viec lam o thanh pho rat nhieu","expected":"việc làm ở thành phố rất nhiều"}
+{"raw":"toi lam viec tu thu hai den thu sau","expected":"tôi làm việc từ thứ hai đến thứ sáu"}
+{"raw":"buoi sang toi thuong chay bo","expected":"buổi sáng tôi thường chạy bộ"}
+{"raw":"toi thich an sang o quan gan nha","expected":"tôi thích ăn sáng ở quán gần nhà"}
+{"raw":"ban co biet nha ga o dau khong","expected":"bạn có biết nhà ga ở đâu không"}
+{"raw":"toi muon di Da Lat vao cuoi tuan","expected":"tôi muốn đi Đà Lạt vào cuối tuần"}
+{"raw":"co ay dang o trong benh vien","expected":"cô ấy đang ở trong bệnh viện"}
+{"raw":"toi dang tim mot can ho moi","expected":"tôi đang tìm một căn hộ mới"}
+{"raw":"gia thue nha o day kha cao","expected":"giá thuê nhà ở đây khá cao"}
+{"raw":"ban nen di kham suc khoe dinh ky","expected":"bạn nên đi khám sức khỏe định kỳ"}
+{"raw":"toi bi dau dau tu sang","expected":"tôi bị đau đầu từ sáng"}
+{"raw":"ban da uong thuoc chua","expected":"bạn đã uống thuốc chưa"}
+{"raw":"nho nghi ngoi du suc nhe","expected":"nhớ nghỉ ngơi đủ sức nhé"}
+{"raw":"toi se di kham vao ngay mai","expected":"tôi sẽ đi khám vào ngày mai"}
+{"raw":"bac si hen toi tuan sau","expected":"bác sĩ hẹn tôi tuần sau"}
+{"raw":"hom nay toi o nha ca ngay","expected":"hôm nay tôi ở nhà cả ngày"}
+{"raw":"toi vua hoc xong mot khoa online","expected":"tôi vừa học xong một khóa online"}
+{"raw":"khoa hoc nay rat bo ich","expected":"khóa học này rất bổ ích"}
+{"raw":"ban co muon dang ky cung khong","expected":"bạn có muốn đăng ký cùng không"}
+{"raw":"hoc phi da bao gom tai lieu","expected":"học phí đã bao gồm tài liệu"}
+{"raw":"giang vien giang bai rat de hieu","expected":"giảng viên giảng bài rất dễ hiểu"}
+{"raw":"toi ghi chu lai moi thu","expected":"tôi ghi chú lại mọi thứ"}
+{"raw":"sau buoi hoc toi ve nha ngay","expected":"sau buổi học tôi về nhà ngay"}
+{"raw":"toi can on lai bai cu","expected":"tôi cần ôn lại bài cũ"}
+{"raw":"ky thi se dien ra vao thang sau","expected":"kỳ thi sẽ diễn ra vào tháng sau"}
+{"raw":"toi chua chuan bi gi ca","expected":"tôi chưa chuẩn bị gì cả"}
+{"raw":"ban giup toi on tap duoc khong","expected":"bạn giúp tôi ôn tập được không"}
+{"raw":"chung minh se hoc cung nhau","expected":"chúng mình sẽ học cùng nhau"}
+{"raw":"toi thich hoc vao buoi toi","expected":"tôi thích học vào buổi tối"}
+{"raw":"nhung hom nay toi hoi met","expected":"nhưng hôm nay tôi hơi mệt"}
+{"raw":"toi se di ngu som","expected":"tôi sẽ đi ngủ sớm"}
+{"raw":"ngay mai toi phai day som","expected":"ngày mai tôi phải dậy sớm"}
+{"raw":"ban dat bao thuc chua","expected":"bạn đặt báo thức chưa"}
+{"raw":"toi dat hai cai bao thuc","expected":"tôi đặt hai cái báo thức"}
+{"raw":"sang nao toi cung bi tre","expected":"sáng nào tôi cũng bị trễ"}
+{"raw":"hom qua toi di cho voi me","expected":"hôm qua tôi đi chợ với mẹ"}
+{"raw":"chung toi mua rat nhieu rau","expected":"chúng tôi mua rất nhiều rau"}
+{"raw":"gia rau nam nay re hon","expected":"giá rau năm nay rẻ hơn"}
+{"raw":"toi thich an com nha hon","expected":"tôi thích ăn cơm nhà hơn"}
+{"raw":"me toi nau an rat ngon","expected":"mẹ tôi nấu ăn rất ngon"}
+{"raw":"toi hoc cach nau an tu me","expected":"tôi học cách nấu ăn từ mẹ"}
+{"raw":"cuoi tuan toi hay danh thoi gian cho gia dinh","expected":"cuối tuần tôi hay dành thời gian cho gia đình"}
+{"raw":"ca nha toi thuong an toi cung nhau","expected":"cả nhà tôi thường ăn tối cùng nhau"}
+{"raw":"toi co mot dua em gai","expected":"tôi có một đứa em gái"}
+{"raw":"em toi dang hoc cap hai","expected":"em tôi đang học cấp hai"}
+{"raw":"toi rat yeu gia dinh minh","expected":"tôi rất yêu gia đình mình"}
+{"raw":"ban ay la dong nghiep cua toi","expected":"bạn ấy là đồng nghiệp của tôi"}
+{"raw":"chung toi lam cung mot cong ty","expected":"chúng tôi làm cùng một công ty"}
+{"raw":"cong ty toi o trung tam thanh pho","expected":"công ty tôi ở trung tâm thành phố"}
+{"raw":"toi di lam bang xe may","expected":"tôi đi làm bằng xe máy"}
+{"raw":"duong nay hay bi tac duong","expected":"đường này hay bị tắc đường"}
+{"raw":"toi thuong mat 30 phut de di lam","expected":"tôi thường mất 30 phút để đi làm"}
+{"raw":"neu troi mua toi se di xe buyt","expected":"nếu trời mưa tôi sẽ đi xe buýt"}
+{"raw":"hom nay toi di lam tre 10 phut","expected":"hôm nay tôi đi làm trễ 10 phút"}
+{"raw":"sep cua toi khong noi gi","expected":"sếp của tôi không nói gì"}
+{"raw":"toi se co gang hon nua","expected":"tôi sẽ cố gắng hơn nữa"}
+{"raw":"ban dung lo ve dieu do","expected":"bạn đừng lo về điều đó"}
+{"raw":"moi chuyen se on thoi","expected":"mọi chuyện sẽ ổn thôi"}
+{"raw":"cam on ban da dong vien minh","expected":"cảm ơn bạn đã động viên mình"}
+{"raw":"minh rat vui khi gap lai ban","expected":"mình rất vui khi gặp lại bạn"}
+{"raw":"hen gap ban vao tuan sau","expected":"hẹn gặp bạn vào tuần sau"}
+{"raw":"chuc ban mot ngay tot lanh","expected":"chúc bạn một ngày tốt lành"}
+{"raw":"nho giu gin suc khoe nhe","expected":"nhớ giữ gìn sức khỏe nhé"}
+{"raw":"toi se gui anh sau","expected":"tôi sẽ gửi ảnh sau"}
+{"raw":"ban xem anh nay dep khong","expected":"bạn xem ảnh này đẹp không"}
+{"raw":"hom nay toi co mot ngay dai","expected":"hôm nay tôi có một ngày dài"}
+{"raw":"nhung toi van thay vui","expected":"nhưng tôi vẫn thấy vui"}
+{"raw":"buoi toi toi thuong di dao","expected":"buổi tối tôi thường đi dạo"}
+{"raw":"cong vien gan nha rat yen tinh","expected":"công viên gần nhà rất yên tĩnh"}
+{"raw":"toi thich ngoi doc sach o do","expected":"tôi thích ngồi đọc sách ở đó"}
+{"raw":"cuoi tuan nay toi se di cam trai","expected":"cuối tuần này tôi sẽ đi cắm trại"}
+{"raw":"ban co muon di cung khong","expected":"bạn có muốn đi cùng không"}
+{"raw":"chung toi se di ba ngay hai dem","expected":"chúng tôi sẽ đi ba ngày hai đêm"}
+{"raw":"nho mang theo thuoc chong muoi","expected":"nhớ mang theo thuốc chống muỗi"}
+{"raw":"toi se chup that nhieu anh dep","expected":"tôi sẽ chụp thật nhiều ảnh đẹp"}
+{"raw":"toi nay ban co ranh khong","expected":"tối nay bạn có rảnh không"}
+{"raw":"Mai gap lai nhe","expected":"Mai gặp lại nhé"}
+{"raw":"Chieu nay hop o phong nao","expected":"Chiều nay họp ở phòng nào"}
+{"raw":"Anh ay noi rang se den som","expected":"Anh ấy nói rằng sẽ đến sớm"}
+{"raw":"Em chua nhan duoc tin nhan","expected":"Em chưa nhận được tin nhắn"}
+{"raw":"Viec nay can xu ly ngay","expected":"Việc này cần xử lý ngay"}
+{"raw":"Nho tra loi giup minh nhe","expected":"Nhớ trả lời giúp mình nhé"}
+{"raw":"Hop xong minh di an trua nhe","expected":"Họp xong mình đi ăn trưa nhé"}
+{"raw":"toi ban hang online","expected":"tôi bán hàng online","context":"moi ngay"}
+{"raw":"ban co ranh khong","expected":"bạn có rảnh không","context":"toi muon hoi"}
+{"raw":"toi di hoc","expected":"tôi đi học","context":"sang nay"}
+{"raw":"co ay dang lam viec","expected":"cô ấy đang làm việc","context":"trong van phong"}
+{"raw":"ban da update ticket tren Jira chua","expected":"bạn đã update ticket trên Jira chưa"}
+{"raw":"minh se tao mot branch moi","expected":"mình sẽ tạo một branch mới"}
+{"raw":"nho chay migration truoc khi start","expected":"nhớ chạy migration trước khi start"}
+{"raw":"database hom nay cham bat thuong","expected":"database hôm nay chậm bất thường"}
+{"raw":"can them index cho bang nay","expected":"cần thêm index cho bảng này"}
+{"raw":"query nay chay mat 3 giay","expected":"query này chạy mất 3 giây"}
+{"raw":"minh vua fix xong loi timeout","expected":"mình vừa fix xong lỗi timeout"}
+{"raw":"ban xem log giup minh duoc khong","expected":"bạn xem log giúp mình được không"}
+{"raw":"api tra ve du lieu sai","expected":"api trả về dữ liệu sai"}
+{"raw":"can viet them test cho phan nay","expected":"cần viết thêm test cho phần này"}
+{"raw":"coverage hien tai la 80 phan tram","expected":"coverage hiện tại là 80 phần trăm"}
+{"raw":"minh se deploy vao toi nay","expected":"mình sẽ deploy vào tối nay"}
+{"raw":"ban nho tag version moi nhe","expected":"bạn nhớ tag version mới nhé"}
+{"raw":"sau khi merge can chay lai CI","expected":"sau khi merge cần chạy lại CI"}
+{"raw":"build bi loi do thieu dependency","expected":"build bị lỗi do thiếu dependency"}
+{"raw":"minh da them package moi vao project","expected":"mình đã thêm package mới vào project"}
+{"raw":"ban cap nhat file README giup minh","expected":"bạn cập nhật file README giúp mình"}
+{"raw":"tai lieu nay can viet bang tieng Anh","expected":"tài liệu này cần viết bằng tiếng Anh"}
+{"raw":"khach hang phan nan ve toc do app","expected":"khách hàng phàn nàn về tốc độ app"}
+{"raw":"minh can them mot man hinh login","expected":"mình cần thêm một màn hình login"}
+{"raw":"design moi trong hien dai hon","expected":"design mới trông hiện đại hơn"}
+{"raw":"ban gui cho minh file Figma nhe","expected":"bạn gửi cho mình file Figma nhé"}
+{"raw":"minh dang cho feedback tu team","expected":"mình đang chờ feedback từ team"}
+{"raw":"cuoc hop review se dien ra vao thu ba","expected":"cuộc họp review sẽ diễn ra vào thứ ba"}
+{"raw":"deadline dang den gan nen can nhanh","expected":"deadline đang đến gần nên cần nhanh"}
+{"raw":"minh se gui ban mot ban draft","expected":"mình sẽ gửi bạn một bản draft"}
+{"raw":"OK de minh check lai roi bao ban","expected":"OK để mình check lại rồi báo bạn"}
+{"raw":"ban cu lam theo ke hoach nhe","expected":"bạn cứ làm theo kế hoạch nhé"}
+{"raw":"meeting hom nay huy roi","expected":"meeting hôm nay hủy rồi"}
+{"raw":"minh vua gui invite cho ca team","expected":"mình vừa gửi invite cho cả team"}
+{"raw":"can chuan bi slide cho buoi demo","expected":"cần chuẩn bị slide cho buổi demo"}
+{"raw":"ban thu mo lai app xem sao","expected":"bạn thử mở lại app xem sao"}
