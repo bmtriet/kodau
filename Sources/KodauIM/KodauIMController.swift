@@ -479,29 +479,39 @@ final class KodauIMController: IMKInputController {
         return menu
     }
 
-    @objc private func selectTypingMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
+    /// InputMethodKit does not pass the NSMenuItem to input-menu actions: it passes a dictionary that holds the
+    /// item under `kIMKCommandMenuItemName`. Reading `representedObject` straight off that sender silently failed,
+    /// so picking VNI / a trigger mode / a strategy in the Kodau input menu never saved.
+    static func menuItem(from sender: Any?) -> NSMenuItem? {
+        if let item = sender as? NSMenuItem { return item }
+        if let info = sender as? [String: Any] { return info[kIMKCommandMenuItemName] as? NSMenuItem }
+        if let info = sender as? NSDictionary { return info[kIMKCommandMenuItemName] as? NSMenuItem }
+        return nil
+    }
+
+    @objc private func selectTypingMode(_ sender: Any?) {
+        guard let raw = Self.menuItem(from: sender)?.representedObject as? String,
               let mode = TypingMode(rawValue: raw) else { return }
         runtime.updateConfig { $0.typingMode = mode }
     }
 
-    @objc private func selectTriggerMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
+    @objc private func selectTriggerMode(_ sender: Any?) {
+        guard let raw = Self.menuItem(from: sender)?.representedObject as? String,
               let triggerMode = ConversionTriggerMode(rawValue: raw) else { return }
         runtime.updateConfig { $0.triggerMode = triggerMode }
     }
 
-    @objc private func toggleFixTypos(_ sender: NSMenuItem) {
+    @objc private func toggleFixTypos(_ sender: Any?) {
         runtime.updateConfig { $0.fixTyposEnabled.toggle() }
     }
 
-    @objc private func selectBrainStrategy(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
+    @objc private func selectBrainStrategy(_ sender: Any?) {
+        guard let raw = Self.menuItem(from: sender)?.representedObject as? String,
               let strategy = BrainStrategy(rawValue: raw) else { return }
         runtime.updateConfig { $0.brainStrategy = strategy }
     }
 
-    @objc private func openDashboardAction(_ sender: NSMenuItem) {
+    @objc private func openDashboardAction(_ sender: Any?) {
         runtime.openDashboardApp()
     }
 }
